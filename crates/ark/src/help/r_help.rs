@@ -167,6 +167,20 @@ impl RHelp {
                     Err(err) => Err(err),
                 }
             },
+            HelpBackendRequest::ParseRFunctions(params) => {
+                // Parse R code to extract function calls
+                match self.parse_r_functions(params.code.clone()) {
+                    Ok(result) => Ok(HelpBackendReply::ParseRFunctionsReply(result)),
+                    Err(err) => {
+                        log::error!("Failed to parse R functions: {:?}", err);
+                        Ok(HelpBackendReply::ParseRFunctionsReply(amalthea::comm::help_comm::ParseRFunctionsResult {
+                            functions: vec![],
+                            success: false,
+                            error: Some(format!("Failed to parse R functions: {}", err)),
+                        }))
+                    },
+                }
+            },
         }
     }
 
@@ -222,6 +236,55 @@ impl RHelp {
                 .to::<bool>()
         })?;
         Ok(found)
+    }
+
+    #[tracing::instrument(level = "trace", skip(self))]
+    fn parse_r_functions(&self, code: String) -> anyhow::Result<amalthea::comm::help_comm::ParseRFunctionsResult> {
+        let result = r_task(|| unsafe {
+            // Call the R function and convert to Vec<String> within the R task
+            match RFunction::from(".ps.rpc.extract_r_functions")
+                .add(code.clone())
+                .call()
+            {
+                Ok(r_result) => {
+                    // The function returns a list with 'functions', 'detailed', and 'success' fields
+                    // We need to extract the 'functions' field which is a character vector
+                    match RFunction::from("[[")
+                        .add(r_result)
+                        .add("functions")
+                        .call()
+                    {
+                        Ok(functions_result) => {
+                            match functions_result.to::<Vec<String>>() {
+                                Ok(functions) => Ok(functions),
+                                Err(err) => Err(anyhow::anyhow!("Failed to convert functions result to Vec<String>: {:?}", err)),
+                            }
+                        }
+                        Err(err) => Err(anyhow::anyhow!("Failed to extract 'functions' field from R result: {:?}", err)),
+                    }
+                },
+                Err(err) => Err(anyhow::anyhow!("R function call failed: {:?}", err)),
+            }
+        });
+
+        match result {
+            Ok(functions) => {
+                let parse_result = amalthea::comm::help_comm::ParseRFunctionsResult {
+                    functions: functions.clone(),
+                    success: true,
+                    error: None,
+                };
+                Ok(parse_result)
+            },
+            Err(err) => {
+                let parse_result = amalthea::comm::help_comm::ParseRFunctionsResult {
+                    functions: vec![],
+                    success: false,
+                    error: Some(format!("Failed to parse R functions: {}", err)),
+                };
+                Ok(parse_result)
+            }
+        }
     }
 
     pub fn r_start_or_reconnect_to_help_server() -> harp::Result<u16> {

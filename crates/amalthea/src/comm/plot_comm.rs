@@ -122,7 +122,7 @@ pub enum PlotBackendRequest {
 	/// Get the intrinsic size of a plot, if known.
 	///
 	/// The intrinsic size of a plot is the size at which a plot would be if
-	/// no size constraints were applied by Positron.
+	/// no size constraints were applied by Erdos.
 	#[serde(rename = "get_intrinsic_size")]
 	GetIntrinsicSize,
 
