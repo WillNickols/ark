@@ -47,6 +47,26 @@ pub struct ShowHelpParams {
 	pub focus: bool,
 }
 
+/// Parameters for the ParseRFunctions method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ParseRFunctionsParams {
+	/// The R code to parse for function calls
+	pub code: String,
+}
+
+/// Result for the ParseRFunctions method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ParseRFunctionsResult {
+	/// List of function names found in the code
+	pub functions: Vec<String>,
+
+	/// Whether the parsing was successful
+	pub success: bool,
+
+	/// Error message if parsing failed
+	pub error: Option<String>,
+}
+
 /**
  * Backend RPC request types for the help comm
  */
@@ -62,6 +82,10 @@ pub enum HelpBackendRequest {
 	#[serde(rename = "show_help_topic")]
 	ShowHelpTopic(ShowHelpTopicParams),
 
+	/// Parse R code to extract function calls.
+	#[serde(rename = "parse_r_functions")]
+	ParseRFunctions(ParseRFunctionsParams),
+
 }
 
 /**
@@ -73,6 +97,9 @@ pub enum HelpBackendReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
+
+	/// Result of parsing R code for function calls.
+	ParseRFunctionsReply(ParseRFunctionsResult),
 
 }
 
