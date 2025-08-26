@@ -331,12 +331,12 @@ impl Shell {
         shell_handler: &mut Box<dyn ShellHandler>,
         msg: &CommOpen,
     ) -> crate::Result<()> {
-        // Check to see whether the target name begins with "positron." This
-        // prefix designates comm IDs that are known to the Positron IDE.
-        let comm = match msg.target_name.starts_with("positron.") {
-            // This is a known comm ID; parse it by stripping the prefix and
+        // Check to see whether the target name begins with "positron." or "erdos." 
+        // These prefixes designate comm IDs that are known to the IDE.
+        let comm = if msg.target_name.starts_with("positron.") {
+            // This is a Positron comm ID; parse it by stripping the prefix and
             // matching against the known comm types
-            true => match Comm::from_str(&msg.target_name[9..]) {
+            match Comm::from_str(&msg.target_name[9..]) {
                 Ok(comm) => comm,
                 Err(err) => {
                     // If the target name starts with "positron." but we don't
@@ -348,13 +348,30 @@ impl Shell {
                         err
                     );
                     return Err(Error::UnknownCommName(msg.target_name.clone()));
-                },
-            },
-
-            // Non-Positron comm IDs (i.e. those that don't start with
-            // "positron.") are passed through to the kernel without judgment.
+                }
+            }
+        } else if msg.target_name.starts_with("erdos.") {
+            // This is an Erdos comm ID; parse it by stripping the prefix and
+            // matching against the known comm types
+            match Comm::from_str(&msg.target_name[6..]) {
+                Ok(comm) => comm,
+                Err(err) => {
+                    // If the target name starts with "erdos." but we don't
+                    // recognize the remainder of the string, consider that name
+                    // to be invalid and return an error.
+                    log::warn!(
+                        "Failed to open comm; target name '{}' is unrecognized: {}",
+                        &msg.target_name,
+                        err
+                    );
+                    return Err(Error::UnknownCommName(msg.target_name.clone()));
+                }
+            }
+        } else {
+            // Non-IDE comm IDs (i.e. those that don't start with
+            // "positron." or "erdos.") are passed through to the kernel without judgment.
             // These include Jupyter comm IDs, etc.
-            false => Comm::Other(msg.target_name.clone()),
+            Comm::Other(msg.target_name.clone())
         };
 
         // Create a comm socket for this comm. The initiator is FrontEnd here
