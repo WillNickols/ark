@@ -494,3 +494,236 @@ help_package_topic <- function(help_page) {
         package = if (length(package)) package[sort_indices]
     )
 }
+
+# Initialize topics cache environment (exact port from Rao)
+if (!exists("topicsEnv", envir = .GlobalEnv)) {
+    assign("topicsEnv", new.env(parent = emptyenv()), envir = .GlobalEnv)
+}
+
+# Initialize complete topics cache and last package list
+if (!exists("completeTopicsCache", envir = .GlobalEnv)) {
+    assign("completeTopicsCache", character(0), envir = .GlobalEnv)
+}
+if (!exists("lastPackageList", envir = .GlobalEnv)) {
+    assign("lastPackageList", character(0), envir = .GlobalEnv)
+}
+
+#' Escape special regex characters for safe pattern matching
+#' Exact port of rao/src/cpp/session/modules/SessionCodeTools.R:escapeForRegex
+.ps.escapeForRegex <- function(regex) {
+    gsub("([\\-\\[\\]\\{\\}\\(\\)\\*\\+\\?\\.\\,\\\\\\^\\$\\|\\#\\s])", "\\\\\\1", regex, perl = TRUE)
+}
+
+#' Check if one string is a subsequence of another
+#' Exact port of rao/src/cpp/core/StringUtils.cpp:isSubsequence algorithm in R
+.ps.isSubsequence <- function(haystack, needle) {
+    if (length(needle) == 0 || nchar(needle) == 0) return(rep(TRUE, length(haystack)))
+    if (length(haystack) == 0) return(logical(0))
+    
+    # Vectorized implementation
+    sapply(haystack, function(h) {
+        if (nchar(h) == 0) return(FALSE)
+        if (nchar(needle) > nchar(h)) return(FALSE)
+        
+        h_chars <- utf8ToInt(h)
+        n_chars <- utf8ToInt(needle)
+        
+        h_idx <- 1L
+        n_idx <- 1L
+        h_len <- length(h_chars)
+        n_len <- length(n_chars)
+        
+        while (h_idx <= h_len && n_idx <= n_len) {
+            if (h_chars[h_idx] == n_chars[n_idx]) {
+                n_idx <- n_idx + 1L
+                if (n_idx > n_len) return(TRUE)
+            }
+            h_idx <- h_idx + 1L
+        }
+        FALSE
+    }, USE.NAMES = FALSE)
+}
+
+#' Find subsequence match indices in a string
+#' Exact port of rao/src/cpp/core/StringUtils.cpp:subsequenceIndices
+.ps.subsequenceIndices <- function(haystack, needle) {
+    if (nchar(needle) == 0) return(integer(0))
+    if (nchar(haystack) == 0) return(integer(0))
+    
+    h_chars <- utf8ToInt(haystack)
+    n_chars <- utf8ToInt(needle)
+    
+    result <- integer(length(n_chars))
+    h_idx <- 1L
+    
+    for (i in seq_along(n_chars)) {
+        found <- FALSE
+        while (h_idx <= length(h_chars)) {
+            if (h_chars[h_idx] == n_chars[i]) {
+                result[i] <- h_idx - 1L  # 0-based indexing like C++
+                h_idx <- h_idx + 1L
+                found <- TRUE
+                break
+            }
+            h_idx <- h_idx + 1L
+        }
+        if (!found) return(integer(0))
+    }
+    result
+}
+
+#' Score a single match for ranking
+#' Exact port of rao/src/cpp/session/modules/SessionCodeSearch.cpp:scoreMatch
+.ps.scoreMatch <- function(suggestion, query, is_file = FALSE) {
+    # No penalty for perfect matches
+    if (suggestion == query) return(0L)
+    
+    matches <- .ps.subsequenceIndices(suggestion, query)
+    if (length(matches) == 0) return(.Machine$integer.max)
+    
+    total_penalty <- 0L
+    s_chars <- utf8ToInt(suggestion)
+    q_chars <- utf8ToInt(query)
+    
+    # Loop over the matches and assign a score
+    for (j in seq_along(matches)) {
+        match_pos <- matches[j] + 1L  # Convert to 1-based for R
+        penalty <- match_pos
+        
+        # Less penalty if character follows special delimiter
+        if (match_pos > 1L) {
+            prev_char <- intToUtf8(s_chars[match_pos - 1L])
+            if (prev_char %in% c("_", "-") || (!is_file && prev_char == ".")) {
+                penalty <- j
+            }
+        }
+        
+        # Less penalty for perfect case match (reward case-sensitive match)
+        if (match_pos <= length(s_chars) && j <= length(q_chars)) {
+            if (s_chars[match_pos] == q_chars[j]) {
+                penalty <- penalty - 1L
+            }
+        }
+        
+        total_penalty <- total_penalty + penalty
+    }
+    
+    # Penalize files
+    if (is_file) {
+        total_penalty <- total_penalty + 1L
+    }
+    
+    # Penalize unmatched characters
+    unmatched_penalty <- (length(q_chars) - length(matches)) * length(q_chars)
+    total_penalty <- total_penalty + as.integer(unmatched_penalty)
+    
+    total_penalty
+}
+
+#' Score multiple strings against a query
+#' Exact port of rao/src/cpp/session/modules/SessionCodeSearch.cpp:rs_scoreMatches
+.ps.scoreMatches <- function(suggestions, query) {
+    if (length(suggestions) == 0) return(integer(0))
+    sapply(suggestions, function(s) .ps.scoreMatch(s, query, FALSE), USE.NAMES = FALSE)
+}
+
+#' Search help topics by query string
+#' Exact port of rao/src/cpp/session/modules/SessionHelp.R:suggest_topics
+#' Get current list of installed packages for cache invalidation
+.ps.getCurrentPackageList <- function() {
+    # Get all package paths and sort for consistent comparison
+    pkgpaths <- path.package(quiet = TRUE)
+    sort(pkgpaths)
+}
+
+#' Discover all help topics with proper cache invalidation
+#' Only rebuilds cache when package list changes (like Rao)
+.ps.discoverAllHelpTopics <- function() {
+    # Get current package list
+    current_package_list <- .ps.getCurrentPackageList()
+    
+    # Check if package list has changed since last discovery
+    cached_flat <- get("completeTopicsCache", envir = .GlobalEnv)
+    last_package_list <- get("lastPackageList", envir = .GlobalEnv)
+    
+    # If we have cached topics and package list unchanged, use cached results
+    if (length(cached_flat) > 0 && 
+        identical(last_package_list, current_package_list)) {
+        return(cached_flat)
+    }
+    
+    # Package list changed - need to rebuild cache
+    topics_env <- get("topicsEnv", envir = .GlobalEnv)
+    rm(list = ls(envir = topics_env), envir = topics_env)
+    
+    # Read topics from packages (with per-package caching)
+    topics <- lapply(current_package_list, function(pkgpath) tryCatch({
+        aliases <- file.path(pkgpath, "help/aliases.rds")
+        index <- file.path(pkgpath, "help/AnIndex")
+        
+        value <- if (file.exists(aliases)) {
+            names(readRDS(aliases))
+        } else if (file.exists(index)) {
+            data <- read.table(index, sep = "\t")
+            data[, 1]
+        } else {
+            NULL
+        }
+        
+        # Cache the topics for this package
+        if (!is.null(value)) {
+            assign(pkgpath, value, envir = topics_env)
+        }
+        value
+        
+    }, error = function(e) NULL))
+    
+    # Build flat list and cache it
+    flat <- unlist(topics, use.names = FALSE)
+    assign("completeTopicsCache", flat, envir = .GlobalEnv)
+    assign("lastPackageList", current_package_list, envir = .GlobalEnv)
+    
+    flat
+}
+
+#' @export
+.ps.rpc.searchHelpTopics <- function(query = "") {
+    # Get all topics (uses aggressive caching for performance)
+    flat <- .ps.discoverAllHelpTopics()
+    
+    # Handle empty query
+    if (!nzchar(query)) {
+        return(flat[1:min(length(flat), 50)])  # Return first 50 like Python
+    }
+    
+    # Order matches by subsequence match score (exact Rao algorithm)
+    scores <- .ps.scoreMatches(tolower(flat), tolower(query))
+    ordered <- flat[order(scores, nchar(flat))]
+    matches <- unique(ordered[.ps.isSubsequence(tolower(ordered), tolower(query))])
+    
+    # Force first character to match, but allow typos after.
+    # Also keep matches with one or more leading '.', so that e.g.
+    # the prefix 'libpaths' can match '.libPaths'
+    if (nzchar(query)) {
+        first <- .ps.escapeForRegex(substring(query, 1L, 1L))
+        pattern <- sprintf("^[.]*[%s]", first)
+        matches <- grep(pattern, matches, value = TRUE, perl = TRUE, ignore.case = TRUE)
+    }
+    
+    matches
+}
+
+#' Pre-warm the help cache by doing initial discovery
+#' This should be called once on service startup to make searches fast
+.ps.warmHelpCache <- function() {
+    tryCatch({
+        # Trigger discovery which will populate the cache
+        .ps.discoverAllHelpTopics()
+    }, error = function(e) {
+        # If pre-warming fails, searches will still work but be slower initially
+        invisible(NULL)
+    })
+}
+
+# Pre-warm cache on module load (like Rao does)
+.ps.warmHelpCache()

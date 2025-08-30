@@ -54,6 +54,13 @@ pub struct ParseRFunctionsParams {
 	pub code: String,
 }
 
+/// Parameters for the SearchHelpTopics method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SearchHelpTopicsParams {
+	/// Search query (empty = first 50 topics)
+	pub query: String,
+}
+
 /// Result for the ParseRFunctions method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ParseRFunctionsResult {
@@ -86,6 +93,10 @@ pub enum HelpBackendRequest {
 	#[serde(rename = "parse_r_functions")]
 	ParseRFunctions(ParseRFunctionsParams),
 
+	/// Search help topics by query string.
+	#[serde(rename = "search_help_topics")]
+	SearchHelpTopics(SearchHelpTopicsParams),
+
 }
 
 /**
@@ -100,6 +111,9 @@ pub enum HelpBackendReply {
 
 	/// Result of parsing R code for function calls.
 	ParseRFunctionsReply(ParseRFunctionsResult),
+
+	/// Array of topic names ranked by relevance.
+	SearchHelpTopicsReply(Vec<String>),
 
 }
 

@@ -181,6 +181,16 @@ impl RHelp {
                     },
                 }
             },
+            HelpBackendRequest::SearchHelpTopics(params) => {
+                // Search help topics by query string
+                match self.search_help_topics(params.query.clone()) {
+                    Ok(topics) => Ok(HelpBackendReply::SearchHelpTopicsReply(topics)),
+                    Err(err) => {
+                        log::error!("Failed to search help topics: {:?}", err);
+                        Ok(HelpBackendReply::SearchHelpTopicsReply(vec![]))
+                    },
+                }
+            },
         }
     }
 
@@ -283,6 +293,22 @@ impl RHelp {
                     error: Some(format!("Failed to parse R functions: {}", err)),
                 };
                 Ok(parse_result)
+            }
+        }
+    }
+
+    fn search_help_topics(&self, query: String) -> anyhow::Result<Vec<String>> {
+        // Call the R function to search help topics
+        let result: harp::Result<Vec<String>> = RFunction::from(".ps.rpc.searchHelpTopics")
+            .param("query", query)
+            .call()
+            .and_then(|x| x.try_into());
+
+        match result {
+            Ok(topics) => Ok(topics),
+            Err(err) => {
+                log::error!("Failed to search help topics in R: {:?}", err);
+                Err(anyhow!("Failed to search help topics: {}", err))
             }
         }
     }
