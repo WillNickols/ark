@@ -167,16 +167,16 @@ impl RHelp {
                     Err(err) => Err(err),
                 }
             },
-            HelpBackendRequest::ParseRFunctions(params) => {
-                // Parse R code to extract function calls
-                match self.parse_r_functions(params.code.clone()) {
-                    Ok(result) => Ok(HelpBackendReply::ParseRFunctionsReply(result)),
+            HelpBackendRequest::ParseFunctions(params) => {
+                // Parse code to extract function calls
+                match self.parse_functions(params.code.clone(), params.language.clone()) {
+                    Ok(result) => Ok(HelpBackendReply::ParseFunctionsReply(result)),
                     Err(err) => {
-                        log::error!("Failed to parse R functions: {:?}", err);
-                        Ok(HelpBackendReply::ParseRFunctionsReply(amalthea::comm::help_comm::ParseRFunctionsResult {
+                        log::error!("Failed to parse functions: {:?}", err);
+                        Ok(HelpBackendReply::ParseFunctionsReply(amalthea::comm::help_comm::ParseFunctionsResult {
                             functions: vec![],
                             success: false,
-                            error: Some(format!("Failed to parse R functions: {}", err)),
+                            error: Some(format!("Failed to parse functions: {}", err)),
                         }))
                     },
                 }
@@ -249,51 +249,60 @@ impl RHelp {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    fn parse_r_functions(&self, code: String) -> anyhow::Result<amalthea::comm::help_comm::ParseRFunctionsResult> {
-        let result = r_task(|| unsafe {
-            // Call the R function and convert to Vec<String> within the R task
-            match RFunction::from(".ps.rpc.extract_r_functions")
-                .add(code.clone())
+    fn parse_functions(&self, code: String, language: String) -> anyhow::Result<amalthea::comm::help_comm::ParseFunctionsResult> {
+        // This is the R runtime, so we only handle R code
+        if language != "r" {
+            return Ok(amalthea::comm::help_comm::ParseFunctionsResult {
+                functions: vec![],
+                success: false,
+                error: Some(format!("R runtime cannot parse {} code", language)),
+            });
+        }
+
+        // Call the R function and extract all fields in a single r_task
+        let result: harp::Result<(Vec<String>, bool, Option<String>)> = r_task(|| {
+            // Call the R function
+            let r_result = RFunction::from(".ps.rpc.parse_functions")
+                .param("code", code)
+                .param("language", language)
+                .call()?;
+
+            // Extract all fields from the R list result within the same task
+            let functions: Vec<String> = RFunction::from("[[")
+                .add(r_result.clone())
+                .add("functions")
                 .call()
-            {
-                Ok(r_result) => {
-                    // The function returns a list with 'functions', 'detailed', and 'success' fields
-                    // We need to extract the 'functions' field which is a character vector
-                    match RFunction::from("[[")
-                        .add(r_result)
-                        .add("functions")
-                        .call()
-                    {
-                        Ok(functions_result) => {
-                            match functions_result.to::<Vec<String>>() {
-                                Ok(functions) => Ok(functions),
-                                Err(err) => Err(anyhow::anyhow!("Failed to convert functions result to Vec<String>: {:?}", err)),
-                            }
-                        }
-                        Err(err) => Err(anyhow::anyhow!("Failed to extract 'functions' field from R result: {:?}", err)),
-                    }
-                },
-                Err(err) => Err(anyhow::anyhow!("R function call failed: {:?}", err)),
-            }
+                .and_then(|x| x.try_into())
+                .unwrap_or_default();
+
+            let success: bool = RFunction::from("[[")
+                .add(r_result.clone())
+                .add("success")
+                .call()
+                .and_then(|x| x.try_into())
+                .unwrap_or(false);
+
+            let error: Option<String> = RFunction::from("[[")
+                .add(r_result)
+                .add("error")
+                .call()
+                .and_then(|x| x.try_into())
+                .ok();
+
+            Ok((functions, success, error))
         });
 
         match result {
-            Ok(functions) => {
-                let parse_result = amalthea::comm::help_comm::ParseRFunctionsResult {
-                    functions: functions.clone(),
-                    success: true,
-                    error: None,
-                };
-                Ok(parse_result)
-            },
-            Err(err) => {
-                let parse_result = amalthea::comm::help_comm::ParseRFunctionsResult {
-                    functions: vec![],
-                    success: false,
-                    error: Some(format!("Failed to parse R functions: {}", err)),
-                };
-                Ok(parse_result)
-            }
+            Ok((functions, success, error)) => Ok(amalthea::comm::help_comm::ParseFunctionsResult {
+                functions,
+                success,
+                error,
+            }),
+            Err(err) => Ok(amalthea::comm::help_comm::ParseFunctionsResult {
+                functions: vec![],
+                success: false,
+                error: Some(format!("Failed to parse functions: {}", err)),
+            })
         }
     }
 

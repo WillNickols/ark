@@ -47,11 +47,14 @@ pub struct ShowHelpParams {
 	pub focus: bool,
 }
 
-/// Parameters for the ParseRFunctions method.
+/// Parameters for the ParseFunctions method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ParseRFunctionsParams {
-	/// The R code to parse for function calls
+pub struct ParseFunctionsParams {
+	/// The code to parse for function calls
 	pub code: String,
+	
+	/// The programming language of the code
+	pub language: String,
 }
 
 /// Parameters for the SearchHelpTopics method.
@@ -61,9 +64,9 @@ pub struct SearchHelpTopicsParams {
 	pub query: String,
 }
 
-/// Result for the ParseRFunctions method.
+/// Result for the ParseFunctions method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ParseRFunctionsResult {
+pub struct ParseFunctionsResult {
 	/// List of function names found in the code
 	pub functions: Vec<String>,
 
@@ -89,9 +92,9 @@ pub enum HelpBackendRequest {
 	#[serde(rename = "show_help_topic")]
 	ShowHelpTopic(ShowHelpTopicParams),
 
-	/// Parse R code to extract function calls.
-	#[serde(rename = "parse_r_functions")]
-	ParseRFunctions(ParseRFunctionsParams),
+	/// Parse code to extract function calls.
+	#[serde(rename = "parse_functions")]
+	ParseFunctions(ParseFunctionsParams),
 
 	/// Search help topics by query string.
 	#[serde(rename = "search_help_topics")]
@@ -109,8 +112,8 @@ pub enum HelpBackendReply {
 	/// Help notification.
 	ShowHelpTopicReply(bool),
 
-	/// Result of parsing R code for function calls.
-	ParseRFunctionsReply(ParseRFunctionsResult),
+	/// Result of parsing code for function calls.
+	ParseFunctionsReply(ParseFunctionsResult),
 
 	/// Array of topic names ranked by relevance.
 	SearchHelpTopicsReply(Vec<String>),
