@@ -13,6 +13,7 @@ pub mod coordinates;
 pub mod dap;
 pub mod data_explorer;
 pub mod debug;
+pub mod environment;
 pub mod errors;
 pub mod fixtures;
 pub mod help;

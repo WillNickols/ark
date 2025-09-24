@@ -26,3 +26,5 @@ pub mod ui_comm;
 pub mod variables_comm;
 #[rustfmt::skip]
 pub mod connections_comm;
+#[rustfmt::skip]
+pub mod environment_comm;

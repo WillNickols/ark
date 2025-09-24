@@ -39,6 +39,7 @@ use serde_json::json;
 use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
+use crate::environment::REnvironment;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::interface::KernelInfo;
@@ -235,6 +236,7 @@ impl ShellHandler for Shell {
                 self.graphics_device_tx.clone(),
             ),
             Comm::Help => handle_comm_open_help(comm),
+            Comm::Environment => handle_comm_open_environment(comm),
             _ => Ok(false),
         }
     }
@@ -293,6 +295,18 @@ fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
         // Send the help event channel to the main R thread so it can
         // emit help events, to be delivered over the help comm.
         RMain::with_mut(|main| main.set_help_fields(help_event_tx, r_port));
+
+        Ok(true)
+    })
+}
+
+fn handle_comm_open_environment(comm: CommSocket) -> amalthea::Result<bool> {
+    r_task(|| {
+        // Start the R Environment handler
+        unwrap!(REnvironment::start(comm), Err(err) => {
+            log::error!("Could not start R Environment handler: {err:?}");
+            return Ok(false);
+        });
 
         Ok(true)
     })

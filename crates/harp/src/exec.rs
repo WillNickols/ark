@@ -274,7 +274,7 @@ where
             payload,
             Some(handler::<F, T>),
             payload,
-        );
+        )
     });
 
     res.unwrap_or_else(|| {

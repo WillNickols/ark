@@ -317,7 +317,6 @@ impl Shell {
         self.comm_manager_tx
             .send(CommManagerEvent::Message(msg.comm_id.clone(), rpc))
             .unwrap();
-
         Ok(())
     }
 

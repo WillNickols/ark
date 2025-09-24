@@ -32,6 +32,9 @@ pub enum Comm {
     /// The Positron help pane.
     Help,
 
+    /// The Environment pane.
+    Environment,
+
     /// The Positron frontend.
     Ui,
 
