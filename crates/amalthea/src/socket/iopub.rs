@@ -223,7 +223,7 @@ impl IOPub {
             )),
             IOPubMessage::Stream(content) => self.process_stream_message(content),
             IOPubMessage::CommOpen(content) => {
-                self.forward(Message::CommOpen(self.message(content)))
+                self.forward(Message::CommOpen(self.message_with_context(content, IOPubContextChannel::Shell)))
             },
             IOPubMessage::CommMsgEvent(content) => {
                 self.forward(Message::CommMsg(self.message(content)))

@@ -119,6 +119,10 @@ pub struct InstallPackageParams {
 
 	/// Type of package manager to use
 	pub package_type: InstallPackagePackageType,
+
+	/// Environment type (e.g., 'Conda', 'Venv', 'VirtualEnv', etc.)
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub environment_type: Option<String>,
 }
 
 /// Parameters for the UninstallPackage method.
@@ -129,6 +133,10 @@ pub struct UninstallPackageParams {
 
 	/// Type of package manager to use
 	pub package_type: UninstallPackagePackageType,
+
+	/// Environment type (e.g., 'Conda', 'Venv', 'VirtualEnv', etc.)
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub environment_type: Option<String>,
 }
 
 /// Parameters for the PackagesChanged event.

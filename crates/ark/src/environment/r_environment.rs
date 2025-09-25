@@ -112,7 +112,7 @@ impl REnvironment {
                 }
             },
             EnvironmentBackendRequest::InstallPackage(params) => {
-                match self.install_package(params.package_name, params.package_type) {
+                match self.install_package(params.package_name, params.package_type, params.environment_type) {
                     Ok(result) => Ok(EnvironmentBackendReply::InstallPackageReply(result)),
                     Err(err) => {
                         log::error!("Failed to install package: {:?}", err);
@@ -124,7 +124,7 @@ impl REnvironment {
                 }
             },
             EnvironmentBackendRequest::UninstallPackage(params) => {
-                match self.uninstall_package(params.package_name, params.package_type) {
+                match self.uninstall_package(params.package_name, params.package_type, params.environment_type) {
                     Ok(result) => Ok(EnvironmentBackendReply::UninstallPackageReply(result)),
                     Err(err) => {
                         log::error!("Failed to uninstall package: {:?}", err);
@@ -236,10 +236,12 @@ impl REnvironment {
 
     /// Install a package
     #[tracing::instrument(level = "trace", skip(self))]
-    fn install_package(&self, package_name: String, package_type: amalthea::comm::environment_comm::InstallPackagePackageType) -> anyhow::Result<InstallResult> {
+    fn install_package(&self, package_name: String, package_type: amalthea::comm::environment_comm::InstallPackagePackageType, environment_type: Option<String>) -> anyhow::Result<InstallResult> {
         match package_type {
             amalthea::comm::environment_comm::InstallPackagePackageType::R => {
-                self.install_r_package(package_name)
+                // R doesn't have the same environment complexity as Python, so we ignore environment_type for now
+                // In the future, this could be used to determine different R package repositories or installation methods
+                self.install_r_package(package_name, environment_type)
             },
             amalthea::comm::environment_comm::InstallPackagePackageType::Python => {
                 Err(anyhow!("Python package installation not supported in R runtime"))
@@ -248,7 +250,7 @@ impl REnvironment {
     }
 
     /// Install an R package
-    fn install_r_package(&self, package_name: String) -> anyhow::Result<InstallResult> {
+    fn install_r_package(&self, package_name: String, _environment_type: Option<String>) -> anyhow::Result<InstallResult> {
         let result = r_task(|| -> anyhow::Result<()> {
             RFunction::from("install.packages")
                 .param("pkgs", package_name.clone())
@@ -274,10 +276,11 @@ impl REnvironment {
 
     /// Uninstall a package
     #[tracing::instrument(level = "trace", skip(self))]
-    fn uninstall_package(&self, package_name: String, package_type: amalthea::comm::environment_comm::UninstallPackagePackageType) -> anyhow::Result<UninstallResult> {
+    fn uninstall_package(&self, package_name: String, package_type: amalthea::comm::environment_comm::UninstallPackagePackageType, environment_type: Option<String>) -> anyhow::Result<UninstallResult> {
         match package_type {
             amalthea::comm::environment_comm::UninstallPackagePackageType::R => {
-                self.uninstall_r_package(package_name)
+                // R doesn't have the same environment complexity as Python, so we ignore environment_type for now
+                self.uninstall_r_package(package_name, environment_type)
             },
             amalthea::comm::environment_comm::UninstallPackagePackageType::Python => {
                 Err(anyhow!("Python package uninstallation not supported in R runtime"))
@@ -286,7 +289,7 @@ impl REnvironment {
     }
 
     /// Uninstall an R package
-    fn uninstall_r_package(&self, package_name: String) -> anyhow::Result<UninstallResult> {
+    fn uninstall_r_package(&self, package_name: String, _environment_type: Option<String>) -> anyhow::Result<UninstallResult> {
         let result = r_task(|| -> anyhow::Result<()> {
             let _result = RFunction::from("remove.packages")
                 .param("pkgs", package_name.clone())
