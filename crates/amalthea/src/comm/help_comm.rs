@@ -27,6 +27,18 @@ pub enum ShowHelpKind {
 	Url
 }
 
+/// Possible values for Language in ParseFunctions
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+pub enum ParseFunctionsLanguage {
+	#[serde(rename = "python")]
+	#[strum(to_string = "python")]
+	Python,
+
+	#[serde(rename = "r")]
+	#[strum(to_string = "r")]
+	R,
+}
+
 /// Parameters for the ShowHelpTopic method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowHelpTopicParams {
@@ -54,7 +66,7 @@ pub struct ParseFunctionsParams {
 	pub code: String,
 	
 	/// The programming language of the code
-	pub language: String,
+	pub language: ParseFunctionsLanguage,
 }
 
 /// Parameters for the SearchHelpTopics method.

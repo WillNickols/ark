@@ -249,13 +249,14 @@ impl RHelp {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    fn parse_functions(&self, code: String, language: String) -> anyhow::Result<amalthea::comm::help_comm::ParseFunctionsResult> {
+    fn parse_functions(&self, code: String, language: amalthea::comm::help_comm::ParseFunctionsLanguage) -> anyhow::Result<amalthea::comm::help_comm::ParseFunctionsResult> {
         // This is the R runtime, so we only handle R code
-        if language != "r" {
+        let language_str = language.to_string();
+        if language_str != "r" {
             return Ok(amalthea::comm::help_comm::ParseFunctionsResult {
                 functions: vec![],
                 success: false,
-                error: Some(format!("R runtime cannot parse {} code", language)),
+                error: Some(format!("R runtime cannot parse {} code", language_str)),
             });
         }
 
@@ -264,7 +265,7 @@ impl RHelp {
             // Call the R function
             let r_result = RFunction::from(".ps.rpc.parse_functions")
                 .param("code", code)
-                .param("language", language)
+                .param("language", language_str.clone())
                 .call()?;
 
             // Extract all fields from the R list result within the same task

@@ -13,6 +13,7 @@ options(help_type = "html")
 # - Works around a pkgload NSE bug that has been fixed, but many people won't have
 #   (https://github.com/r-lib/pkgload/pull/267).
 # - Hardcodes a request for HTML help results.
+# - Searches all installed packages, not just loaded ones.
 help <- function(topic, package = NULL) {
     if ("devtools_shims" %in% search()) {
         help <- as.environment("devtools_shims")[["help"]]
@@ -25,7 +26,8 @@ help <- function(topic, package = NULL) {
     if (is.null(package)) {
         # Use an explicit `NULL` to ensure this always works with dev help
         # https://github.com/r-lib/pkgload/pull/267
-        help(topic = (topic), package = NULL, help_type = "html")
+        # Use try.all.packages = TRUE to search all installed packages, not just loaded ones
+        help(topic = (topic), package = NULL, help_type = "html", try.all.packages = TRUE)
     } else {
         help(topic = (topic), package = (package), help_type = "html")
     }
@@ -628,12 +630,21 @@ if (!exists("lastPackageList", envir = .GlobalEnv)) {
 }
 
 #' Search help topics by query string
-#' Exact port of rao/src/cpp/session/modules/SessionHelp.R:suggest_topics
-#' Get current list of installed packages for cache invalidation
+#' Get current list of ALL installed packages for cache invalidation
 .ps.getCurrentPackageList <- function() {
-    # Get all package paths and sort for consistent comparison
-    pkgpaths <- path.package(quiet = TRUE)
-    sort(pkgpaths)
+    # Get all library paths
+    lib_paths <- .libPaths()
+    
+    # For each library, get all installed package directories
+    all_pkgpaths <- unlist(lapply(lib_paths, function(lib) {
+        # List all directories in this library
+        pkgs <- list.dirs(lib, full.names = TRUE, recursive = FALSE)
+        # Filter to only valid package directories (must have DESCRIPTION file)
+        pkgs[file.exists(file.path(pkgs, "DESCRIPTION"))]
+    }), use.names = FALSE)
+    
+    # Sort for consistent comparison
+    sort(all_pkgpaths)
 }
 
 #' Discover all help topics with proper cache invalidation
