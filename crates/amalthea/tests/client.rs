@@ -113,7 +113,7 @@ fn test_amalthea_comms() {
 
     frontend.send_shell(CommOpen {
         comm_id: comm_id.to_string(),
-        target_name: "variables".to_string(),
+        target_name: "erdos.variables".to_string(),
         data: serde_json::Value::Null,
     });
 
@@ -210,7 +210,7 @@ fn test_amalthea_comms() {
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
     frontend.send_shell(CommInfoRequest {
-        target_name: "variables".to_string(),
+        target_name: "erdos.variables".to_string(),
     });
     frontend.recv_iopub_busy();
 

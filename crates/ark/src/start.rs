@@ -28,53 +28,40 @@ use crate::request::KernelRequest;
 use crate::request::RRequest;
 use crate::shell::Shell;
 
-/// Exported for unit tests.
+/// Exported for unit tests. (DEPRECATED - ZMQ only, use start_kernel_websocket)
+#[allow(dead_code)]
 pub fn start_kernel(
-    connection_file: ConnectionFile,
-    registration_file: Option<RegistrationFile>,
+    _connection_file: ConnectionFile,
+    _registration_file: Option<RegistrationFile>,
+    _r_args: Vec<String>,
+    _startup_file: Option<String>,
+    _session_mode: SessionMode,
+    _capture_streams: bool,
+    _default_repos: DefaultRepos,
+) {
+    panic!("ZMQ-based start_kernel is no longer supported. Use start_kernel_websocket instead.");
+}
+
+pub fn start_kernel_websocket(
+    port: u16,
     r_args: Vec<String>,
     startup_file: Option<String>,
     session_mode: SessionMode,
     capture_streams: bool,
     default_repos: DefaultRepos,
 ) {
-    // Create the channels used for communication. These are created here
-    // as they need to be shared across different components / threads.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
-
-    // Create the pair of channels that will be used to relay messages from
-    // the open comms
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
-
-    // A broadcast channel (bus) used to notify clients when the kernel
-    // has finished initialization.
     let mut kernel_init_tx = Bus::new(1);
-
-    // A channel pair used for kernel requests.
-    // These events are used to manage the runtime state, and also to
-    // handle message delivery, among other things.
     let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
     let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
-    // Create the LSP and DAP clients.
-    // Not all Amalthea kernels provide these, but ark does.
-    // They must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(kernel_init_tx.add_rx())));
-
-    // DAP needs the `RRequest` channel to communicate with
-    // `read_console()` and send commands to the debug interpreter
     let dap = dap::Dap::new_shared(r_request_tx.clone());
-
-    // Communication channel between the R main thread and the Amalthea
-    // StdIn socket thread
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
-
-    // Communication channel between the graphics device (running on the R
-    // thread) and the shell thread
     let (graphics_device_tx, graphics_device_rx) =
         tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
 
-    // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Box::new(Shell::new(
         comm_manager_tx.clone(),
@@ -85,12 +72,8 @@ pub fn start_kernel(
         graphics_device_tx,
     ));
 
-    // Create the control handler; this is used to handle shutdown/interrupt and
-    // related requests
     let control = Arc::new(Mutex::new(Control::new(r_request_tx.clone())));
 
-    // Create the stream behavior; this determines whether the kernel should
-    // capture stdout/stderr and send them to the frontend as IOPub messages
     let stream_behavior = match capture_streams {
         true => amalthea::kernel::StreamBehavior::Capture,
         false => amalthea::kernel::StreamBehavior::None,
@@ -98,10 +81,9 @@ pub fn start_kernel(
 
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
-    let res = kernel::connect(
+    let res = kernel::connect_websocket(
         "ark",
-        connection_file,
-        registration_file,
+        port,
         shell,
         control,
         Some(lsp),
@@ -115,16 +97,15 @@ pub fn start_kernel(
         stdin_reply_tx,
     );
     if let Err(err) = res {
-        panic!("Couldn't connect to frontend: {err:?}");
+        panic!("Couldn't start WebSocket server: {err:?}");
     }
 
-    // Start parent process monitoring for graceful shutdown if applicable. Currently we
-    // only do this for Linux since it uses `prctl()`.
     if let Err(err) = crate::sys::parent_monitor::start_parent_monitoring(r_request_tx.clone()) {
         log::error!("Failed to start parent process monitoring: {err}");
     }
 
-    // Start R
+    // Run R on main thread (it's designed to block - that's OK)
+    // The WebSocket server runs in background threads
     crate::interface::RMain::start(
         r_args,
         startup_file,
@@ -139,5 +120,5 @@ pub fn start_kernel(
         session_mode,
         default_repos,
         graphics_device_rx,
-    )
+    );
 }

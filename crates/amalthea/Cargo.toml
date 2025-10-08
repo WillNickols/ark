@@ -14,6 +14,7 @@ chrono = "0.4.23"
 crypto-common = "0.1.6"
 dirs = "4.0.0"
 futures = "0.3.26"
+futures-util = "0.3.26"
 generic-array = "0.14.6"
 hex = "0.4.3"
 hmac = "0.12.1"
@@ -24,8 +25,10 @@ serde = { version = "1.0.154", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"]}
 sha2 = "0.10.6"
 stdext = { path = "../stdext" }
+tokio = { version = "1.35", features = ["full"] }
+tokio-tungstenite = "0.21"
+tungstenite = "0.21"
 uuid = { version = "1.3.0", features = ["v4"] }
-zmq = "0.10.0"
 strum = "0.24"
 strum_macros = "0.24"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }

@@ -6,9 +6,9 @@
  */
 
 pub mod comm;
-pub mod control;
-pub mod heartbeat;
+// pub mod control; // ZMQ-based, removed
+// pub mod heartbeat; // ZMQ-based, removed
 pub mod iopub;
-pub mod shell;
-pub mod socket;
+// pub mod shell; // ZMQ-based, removed
+// pub mod socket; // ZMQ Socket wrapper, removed
 pub mod stdin;

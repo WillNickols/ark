@@ -17,6 +17,7 @@ use ark::logger;
 use ark::repos::DefaultRepos;
 use ark::signals::initialize_signal_block;
 use ark::start::start_kernel;
+use ark::start::start_kernel_websocket;
 use ark::traps::register_trap_handlers;
 use ark::version::detect_r;
 use crossbeam::channel::unbounded;
@@ -35,8 +36,7 @@ Usage: ark [OPTIONS]
 
 Available options:
 
---connection_file FILE   Start the kernel with the given JSON connection file
-                         (see the Jupyter kernel documentation for details)
+--websocket-port PORT    Start the kernel with WebSocket transport on the given port
 -- arg1 arg2 ...         Set the argument list to pass to R; defaults to
                          --interactive
 --startup-file FILE      An R file to run on session startup
@@ -70,6 +70,7 @@ fn main() -> anyhow::Result<()> {
     argv.next();
 
     let mut connection_file: Option<String> = None;
+    let mut websocket_port: Option<u16> = None;
     let mut startup_file: Option<String> = None;
     let mut session_mode = SessionMode::Console;
     let mut log_file: Option<String> = None;
@@ -84,13 +85,19 @@ fn main() -> anyhow::Result<()> {
     // Process remaining arguments. TODO: Need an argument that can passthrough args to R
     while let Some(arg) = argv.next() {
         match arg.as_str() {
-            "--connection_file" => {
-                if let Some(file) = argv.next() {
-                    connection_file = Some(file);
-                    has_action = true;
+            "--websocket-port" => {
+                if let Some(port_str) = argv.next() {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        websocket_port = Some(port);
+                        has_action = true;
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Invalid port number: '{port_str}'. Port must be a valid u16."
+                        ));
+                    }
                 } else {
                     return Err(anyhow::anyhow!(
-                        "A connection file must be specified when using the `--connection_file` argument."
+                        "A port number must be specified when using the `--websocket-port` argument."
                     ));
                 }
             },
@@ -356,26 +363,20 @@ fn main() -> anyhow::Result<()> {
         std::process::abort();
     }));
 
-    let Some(connection_file) = connection_file else {
+    if let Some(port) = websocket_port {
+        start_kernel_websocket(
+            port,
+            r_args,
+            startup_file,
+            session_mode,
+            capture_streams,
+            default_repos,
+        );
+    } else {
         return Err(anyhow::anyhow!(
-            "A connection file must be specified. Use the `--connection_file` argument."
+            "A WebSocket port (--websocket-port) must be specified."
         ));
-    };
-
-    // Parse the connection file
-    let (connection_file, registration_file) = kernel::read_connection(connection_file.as_str());
-
-    // Connect the Jupyter kernel and start R.
-    // Does not return!
-    start_kernel(
-        connection_file,
-        registration_file,
-        r_args,
-        startup_file,
-        session_mode,
-        capture_streams,
-        default_repos,
-    );
+    }
 
     // Just to please Rust
     Ok(())
@@ -409,8 +410,8 @@ fn install_kernel_spec() -> anyhow::Result<()> {
     let spec = KernelSpec {
         argv: vec![
             String::from(exe_path.to_string_lossy()),
-            String::from("--connection_file"),
-            String::from("{connection_file}"),
+            String::from("--websocket-port"),
+            String::from("{websocket_port}"),
             String::from("--session-mode"),
             String::from("notebook"),
         ],

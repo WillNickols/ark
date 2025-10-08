@@ -167,6 +167,7 @@ impl ShellHandler for Shell {
             execution_count: self.execution_count,
             data,
             metadata: json!({}),
+            transient: json!({}),
         })) {
             warn!(
                 "Could not publish result of computation {} on iopub: {}",

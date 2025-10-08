@@ -46,18 +46,33 @@ help <- function(topic, package = NULL) {
 # found.
 #' @export
 .ps.help.showHelpTopic <- function(topic) {
+    cat(sprintf("[R HELP] showHelpTopic called with topic: '%s'\n", topic), file = stderr())
+    
     info <- split_topic(topic)
     topic <- info$topic
     package <- info$package
+    
+    cat(sprintf("[R HELP] Parsed topic: '%s', package: '%s'\n", topic, 
+        if (is.null(package)) "NULL" else package), file = stderr())
 
     # Try to find help on the topic.
     results <- help(topic, package)
+    
+    cat(sprintf("[R HELP] help() returned %d results\n", length(results)), file = stderr())
+    if (length(results) > 0) {
+        cat(sprintf("[R HELP] First result: %s\n", as.character(results)[1]), file = stderr())
+    }
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
     # `ps_browse_url()` which needs a full `RMain` instance.
     if (length(results) > 0 && !in_ark_tests()) {
+        cat("[R HELP] About to call print(results) which should trigger browseURL\n", file = stderr())
         print(results)
+        cat("[R HELP] print(results) completed\n", file = stderr())
+    } else {
+        cat(sprintf("[R HELP] Skipping print(results) - length: %d, in_ark_tests: %s\n", 
+            length(results), in_ark_tests()), file = stderr())
     }
 
     # Return whether we found any help.

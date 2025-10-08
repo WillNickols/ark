@@ -18,7 +18,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use uuid::Uuid;
 
-use crate::fixtures::r_test_init;
+// use crate::fixtures::r_test_init; // ZMQ test fixtures - removed
 use crate::interface::RMain;
 
 /// Task channels for interrupt-time tasks
@@ -190,7 +190,8 @@ where
     // go through the standard r-task path
     if stdext::IS_TESTING && !RMain::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
-        r_test_init();
+        // r_test_init(); // ZMQ fixtures removed - use harp::fixtures::r_test_init() instead
+        harp::fixtures::r_test_init();
         return f();
     }
 

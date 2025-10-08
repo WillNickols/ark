@@ -107,7 +107,7 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
     let msg = comm_manager_rx.recv_timeout(RECV_TIMEOUT).unwrap();
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
+            assert_eq!(socket.comm_name, "erdos.dataExplorer");
             socket
         },
         _ => panic!("Unexpected Comm Manager Event"),
@@ -139,7 +139,7 @@ fn open_data_explorer_from_expression(
 
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
+            assert_eq!(socket.comm_name, "erdos.dataExplorer");
             Ok(socket)
         },
         _ => panic!("Unexpected Comm Manager Event"),

@@ -5,19 +5,20 @@
  *
  */
 
-pub mod comm;
+pub mod comm; // Type definitions for internal message passing
 pub mod connection_file;
 pub mod error;
-pub mod fixtures;
+// pub mod fixtures; // ZMQ test fixtures - removed
 pub mod kernel;
 pub mod kernel_dirs;
 pub mod kernel_spec;
 pub mod language;
 pub mod registration_file;
 pub mod session;
-pub mod socket;
+pub mod socket; // Kept for type definitions (IOPubMessage, StdInRequest, CommSocket, etc.)
 pub mod stream_capture;
 pub mod sys;
+pub mod websocket;
 pub mod wire;
 
 pub use error::Error;

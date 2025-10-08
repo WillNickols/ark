@@ -58,7 +58,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
 
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.connection");
+            assert_eq!(socket.comm_name, "erdos.connection");
             assert_eq!(socket.comm_id, comm_id);
             socket
         },

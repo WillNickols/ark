@@ -207,9 +207,12 @@ impl RHelp {
     /// `is_help_url()`, so if we get an unexpected prefix, that's an error.
     fn handle_show_help_url(&self, params: ShowHelpUrlParams) -> anyhow::Result<()> {
         let url = params.url;
+        
+        log::info!("[ARK HELP] handle_show_help_url called with URL: {}", url);
 
         if !Self::is_help_url(url.as_str(), self.r_port) {
             let prefix = Self::help_url_prefix(self.r_port);
+            log::error!("[ARK HELP] URL '{}' doesn't have expected prefix '{}'", url, prefix);
             return Err(anyhow!(
                 "Help URL '{url}' doesn't have expected prefix '{prefix}'."
             ));
@@ -221,17 +224,21 @@ impl RHelp {
 
         let proxy_url = url.replace(r_prefix.as_str(), proxy_prefix.as_str());
 
-        log::trace!(
-            "Sending frontend event `ShowHelp` with R url '{url}' and proxy url '{proxy_url}'"
+        log::info!(
+            "[ARK HELP] Sending ShowHelp event - R url: '{}', proxy url: '{}'",
+            url, proxy_url
         );
 
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
-            content: proxy_url,
+            content: proxy_url.clone(),
             kind: ShowHelpKind::Url,
             focus: true,
         });
         let json = serde_json::to_value(msg)?;
+        
+        log::info!("[ARK HELP] Sending comm message with JSON: {}", json);
         self.comm.outgoing_tx.send(CommMsg::Data(json))?;
+        log::info!("[ARK HELP] ShowHelp event sent successfully via comm channel");
 
         // The URL was sent to the frontend.
         Ok(())
@@ -239,12 +246,14 @@ impl RHelp {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
+        log::info!("[ARK HELP] show_help_topic called with topic: {}", topic);
         let found = r_task(|| unsafe {
             RFunction::from(".ps.help.showHelpTopic")
-                .add(topic)
+                .add(topic.clone())
                 .call()?
                 .to::<bool>()
         })?;
+        log::info!("[ARK HELP] show_help_topic completed, found: {}", found);
         Ok(found)
     }
 

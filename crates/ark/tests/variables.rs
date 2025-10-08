@@ -63,7 +63,7 @@ fn test_variables_list() {
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-environment-comm-id"),
-        String::from("positron.environment"),
+        String::from("erdos.environment"),
     );
 
     // Create a dummy comm manager channel that isn't actually used.
@@ -321,7 +321,7 @@ fn test_variables_last_value_enabled() {
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-last-value-enabled-comm-id"),
-        String::from("positron.environment"),
+        String::from("erdos.environment"),
     );
 
     // Create a dummy comm manager channel
@@ -456,7 +456,7 @@ fn test_variables_last_value_disabled() {
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-last-value-disabled-comm-id"),
-        String::from("positron.environment"),
+        String::from("erdos.environment"),
     );
 
     // Create a dummy comm manager channel
@@ -539,7 +539,7 @@ fn test_query_table_summary() {
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-table-summary-comm-id"),
-        String::from("positron.environment"),
+        String::from("erdos.environment"),
     );
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();

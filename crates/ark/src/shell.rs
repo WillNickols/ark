@@ -29,17 +29,16 @@ use async_trait::async_trait;
 use bus::BusReader;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
-use harp::environment::R_ENVS;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
 use harp::ParseResult;
 use log::*;
 use serde_json::json;
-use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
-use crate::environment::REnvironment;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::interface::KernelInfo;
@@ -49,7 +48,6 @@ use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 use crate::ui::UiComm;
-use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -106,6 +104,27 @@ impl Shell {
             }),
         }
     }
+
+    fn r_handle_complete_request(
+        &self,
+        _req: &CompleteRequest,
+    ) -> amalthea::Result<CompleteReply> {
+        // Completions work through LSP (Language Server Protocol), not Jupyter protocol.
+        // Positron/VSCode connect via LSP and get full completions.
+        // Jupyter protocol completions were never implemented (not needed for Positron).
+        // If Jupyter frontend support is desired, this would need to:
+        // 1. Use the LSP completion engine (crate::lsp::completions::provide)
+        // 2. Create proper WorldState and DocumentContext
+        // 3. Convert LSP CompletionItems to Jupyter matches
+        
+        Ok(CompleteReply {
+            matches: Vec::new(),
+            status: Status::Ok,
+            cursor_start: 0,
+            cursor_end: 0,
+            metadata: json!({}),
+        })
+    }
 }
 
 #[async_trait]
@@ -156,16 +175,9 @@ impl ShellHandler for Shell {
 
     async fn handle_complete_request(
         &self,
-        _req: &CompleteRequest,
+        req: &CompleteRequest,
     ) -> amalthea::Result<CompleteReply> {
-        // No matches in this toy implementation.
-        Ok(CompleteReply {
-            matches: Vec::new(),
-            status: Status::Ok,
-            cursor_start: 0,
-            cursor_end: 0,
-            metadata: json!({}),
-        })
+        r_task(|| self.r_handle_complete_request(req))
     }
 
     /// Handle a request to test code for completion.
@@ -186,6 +198,7 @@ impl ShellHandler for Shell {
         let (response_tx, response_rx) = unbounded::<amalthea::Result<ExecuteReply>>();
         let mut req_clone = req.clone();
         req_clone.code = convert_line_endings(&req_clone.code, LineEnding::Posix);
+        
         if let Err(err) = self.r_request_tx.send(RRequest::ExecuteCode(
             req_clone.clone(),
             originator,
@@ -197,7 +210,6 @@ impl ShellHandler for Shell {
             )
         }
 
-        trace!("Code sent to R: {}", req_clone.code);
         let result = response_rx.recv().unwrap();
 
         result
@@ -228,30 +240,295 @@ impl ShellHandler for Shell {
     /// the UI has been disconnected and reconnected.
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
-            Comm::Variables => handle_comm_open_variables(comm, self.comm_manager_tx.clone()),
-            Comm::Ui => handle_comm_open_ui(
-                comm,
-                self.stdin_request_tx.clone(),
-                self.kernel_request_tx.clone(),
-                self.graphics_device_tx.clone(),
-            ),
-            Comm::Help => handle_comm_open_help(comm),
-            Comm::Environment => handle_comm_open_environment(comm),
-            _ => Ok(false),
+            Comm::Variables => {
+                log::info!("[COMM OPEN] Received comm open for Variables");
+                Ok(true)
+            },
+            Comm::Ui => {
+                log::info!("[COMM OPEN] Received comm open for Ui");
+                handle_comm_open_ui(
+                    comm,
+                    self.stdin_request_tx.clone(),
+                    self.kernel_request_tx.clone(),
+                    self.graphics_device_tx.clone(),
+                )
+            },
+            Comm::Help => {
+                log::info!("[COMM OPEN] Received comm open for Help");
+                log::info!("[COMM OPEN] Calling handle_comm_open_help");
+                let result = handle_comm_open_help(comm);
+                log::info!("[COMM OPEN] handle_comm_open_help returned: {:?}", result);
+                result
+            },
+            Comm::Environment => {
+                log::info!("[COMM OPEN] Received comm open for Environment");
+                Ok(true)
+            },
+            _ => {
+                log::info!("[COMM OPEN] Received comm open for unknown target");
+                Ok(false)
+            }
         }
+    }
+    
+    async fn handle_comm_message(&self, _comm_id: &str, data: &serde_json::Value) -> amalthea::Result<serde_json::Value> {
+        let method = data.get("method").and_then(|m| m.as_str()).unwrap_or("");
+        let id = data.get("id").cloned();
+        let params = data.get("params");
+        
+        let result = match method {
+            "list_packages" => {
+                let packages = r_task(|| -> anyhow::Result<Vec<serde_json::Value>> {
+                    let result = RFunction::from("installed.packages").call()?;
+                    
+                    let df = RFunction::from("as.data.frame")
+                        .param("x", result)
+                        .param("stringsAsFactors", false)
+                        .call()?;
+                    
+                    let nrows: i32 = RFunction::from("nrow")
+                        .param("x", df.clone())
+                        .call()
+                        .and_then(|x| x.try_into())?;
+                    
+                    let mut packages = Vec::new();
+                    for i in 1..=nrows {
+                        let name: String = RFunction::from("[")
+                            .param("x", df.clone())
+                            .param("i", i)
+                            .param("j", "Package")
+                            .call()
+                            .and_then(|x| x.try_into())?;
+                        
+                        let version: String = RFunction::from("[")
+                            .param("x", df.clone())
+                            .param("i", i)
+                            .param("j", "Version")
+                            .call()
+                            .and_then(|x| x.try_into())?;
+                        
+                        packages.push(serde_json::json!({
+                            "name": name,
+                            "version": version
+                        }));
+                    }
+                    
+                    Ok(packages)
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to list packages: {}", e)))?;
+                
+                serde_json::Value::Array(packages)
+            },
+            
+            "install_package" => {
+                let package_name = params
+                    .and_then(|p| p.get("package_name"))
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing package_name parameter")))?;
+                
+                let install_result = r_task(|| -> anyhow::Result<()> {
+                    RFunction::from("install.packages")
+                        .param("pkgs", package_name)
+                        .call()?;
+                    Ok(())
+                });
+                
+                match install_result {
+                    Ok(_) => serde_json::json!({
+                        "success": true,
+                        "error": serde_json::Value::Null
+                    }),
+                    Err(e) => serde_json::json!({
+                        "success": false,
+                        "error": format!("Failed to install package {}: {}", package_name, e)
+                    })
+                }
+            },
+            
+            "uninstall_package" => {
+                let package_name = params
+                    .and_then(|p| p.get("package_name"))
+                    .and_then(|n| n.as_str())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing package_name parameter")))?;
+                
+                let uninstall_result = r_task(|| -> anyhow::Result<()> {
+                    RFunction::from("remove.packages")
+                        .param("pkgs", package_name)
+                        .call()?;
+                    Ok(())
+                });
+                
+                match uninstall_result {
+                    Ok(_) => serde_json::json!({
+                        "success": true,
+                        "error": serde_json::Value::Null
+                    }),
+                    Err(e) => serde_json::json!({
+                        "success": false,
+                        "error": format!("Failed to uninstall package {}: {}", package_name, e)
+                    })
+                }
+            },
+            
+            "show_help_topic" => {
+                let topic = params
+                    .and_then(|p| p.get("topic"))
+                    .and_then(|t| t.as_str())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing topic parameter")))?;
+                
+                let found = r_task(|| -> anyhow::Result<bool> {
+                    let result: harp::Result<bool> = RFunction::from(".ps.rpc.showHelpTopic")
+                        .param("topic", topic)
+                        .call()
+                        .and_then(|x| x.try_into());
+                    
+                    match result {
+                        Ok(found) => Ok(found),
+                        Err(_) => Ok(false)
+                    }
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to show help topic: {}", e)))?;
+                
+                serde_json::Value::Bool(found)
+            },
+            
+            "search_help_topics" => {
+                let query = params
+                    .and_then(|p| p.get("query"))
+                    .and_then(|q| q.as_str())
+                    .unwrap_or("");
+                
+                let topics = r_task(|| -> anyhow::Result<Vec<String>> {
+                    let result: harp::Result<Vec<String>> = RFunction::from(".ps.rpc.searchHelpTopics")
+                        .param("query", query)
+                        .call()
+                        .and_then(|x| x.try_into());
+                    
+                    match result {
+                        Ok(topics) => Ok(topics),
+                        Err(e) => Err(anyhow::anyhow!("Failed to search help topics: {}", e))
+                    }
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to search help topics: {}", e)))?;
+                
+                serde_json::Value::Array(topics.into_iter().map(|t| serde_json::Value::String(t)).collect())
+            },
+            
+            "parse_functions" => {
+                let code = params
+                    .and_then(|p| p.get("code"))
+                    .and_then(|c| c.as_str())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing code parameter")))?;
+                
+                let language = params
+                    .and_then(|p| p.get("language"))
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("r");
+                
+                let result = r_task(|| -> anyhow::Result<serde_json::Value> {
+                    let result: harp::Result<RObject> = RFunction::from(".ps.rpc.parse_functions")
+                        .param("code", code)
+                        .param("language", language)
+                        .call();
+                    
+                    match result {
+                        Ok(obj) => {
+                            // The R function returns a list with functions, success, error
+                            let functions: Vec<String> = RFunction::from("[[")
+                                .param("x", obj.clone())
+                                .param("i", "functions")
+                                .call()
+                                .and_then(|x| x.try_into())
+                                .unwrap_or_else(|_| vec![]);
+                            
+                            let success: bool = RFunction::from("[[")
+                                .param("x", obj.clone())
+                                .param("i", "success")
+                                .call()
+                                .and_then(|x| x.try_into())
+                                .unwrap_or(false);
+                            
+                            let error: Option<String> = RFunction::from("[[")
+                                .param("x", obj)
+                                .param("i", "error")
+                                .call()
+                                .and_then(|x| x.try_into())
+                                .ok();
+                            
+                            Ok(serde_json::json!({
+                                "functions": functions,
+                                "success": success,
+                                "error": error
+                            }))
+                        },
+                        Err(e) => Ok(serde_json::json!({
+                            "functions": Vec::<String>::new(),
+                            "success": false,
+                            "error": format!("{}", e)
+                        }))
+                    }
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to parse functions: {}", e)))?;
+                
+                result
+            },
+            
+            "set_working_directory" => {
+                let directory = params
+                    .and_then(|p| p.get("directory"))
+                    .and_then(|d| d.as_str())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing directory parameter")))?;
+                
+                let set_result = r_task(|| -> anyhow::Result<bool> {
+                    RFunction::from("setwd")
+                        .param("dir", directory)
+                        .call()?;
+                    Ok(true)
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to set working directory: {}", e)))?;
+                
+                // Emit working_directory event to notify frontend of the change
+                use amalthea::comm::ui_comm::{UiFrontendEvent, WorkingDirectoryParams};
+                use std::path::PathBuf;
+                
+                if let Err(err) = (|| -> anyhow::Result<()> {
+                    let mut new_working_directory = std::env::current_dir()?;
+                    
+                    // Attempt to alias the directory, if it's within the home directory
+                    if let Some(home_dir) = home::home_dir() {
+                        if let Ok(stripped_dir) = new_working_directory.strip_prefix(home_dir) {
+                            let mut new_path = PathBuf::from("~");
+                            new_path.push(stripped_dir);
+                            new_working_directory = new_path;
+                        }
+                    }
+                    
+                    let event = UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+                        directory: new_working_directory.to_string_lossy().to_string(),
+                    });
+                    
+                    if let Err(err) = comm.outgoing_tx.send(amalthea::socket::comm::CommMsg::Data(
+                        serde_json::to_value(event)?
+                    )) {
+                        log::error!("Error sending working_directory event: {}", err);
+                    }
+                    
+                    Ok(())
+                })() {
+                    log::error!("Failed to emit working_directory event: {}", err);
+                }
+                
+                serde_json::Value::Bool(set_result)
+            },
+            
+            _ => {
+                return Err(amalthea::Error::Anyhow(anyhow::anyhow!("Unknown method: {}", method)));
+            }
+        };
+        
+        Ok(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result
+        }))
     }
 }
 
-fn handle_comm_open_variables(
-    comm: CommSocket,
-    comm_manager_tx: Sender<CommManagerEvent>,
-) -> amalthea::Result<bool> {
-    r_task(|| {
-        let global_env = RObject::view(R_ENVS.global);
-        RVariables::start(global_env, comm, comm_manager_tx);
-        Ok(true)
-    })
-}
 
 fn handle_comm_open_ui(
     comm: CommSocket,
@@ -273,41 +550,41 @@ fn handle_comm_open_ui(
 }
 
 fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
+    use stdext::unwrap;
+    
+    log::info!("[COMM OPEN HELP] handle_comm_open_help called!");
+    
     r_task(|| {
+        log::info!("[COMM OPEN HELP] Inside r_task closure");
+        
         // Ensure the R help server is started, and get its port
         let r_port = unwrap!(RHelp::r_start_or_reconnect_to_help_server(), Err(err) => {
-            log::error!("Could not start R help server: {err:?}");
+            log::error!("[COMM OPEN HELP] Could not start R help server: {err:?}");
             return Ok(false);
         });
+        log::info!("[COMM OPEN HELP] R help server started on port: {}", r_port);
 
         // Ensure our proxy help server is started, and get its port
         let proxy_port = unwrap!(help_proxy::start(r_port), Err(err) => {
             log::error!("Could not start R help proxy server: {err:?}");
             return Ok(false);
         });
+        log::info!("R help proxy server started on port: {}", proxy_port);
 
         // Start the R Help handler that routes help requests
         let help_event_tx = unwrap!(RHelp::start(comm, r_port, proxy_port), Err(err) => {
             log::error!("Could not start R Help handler: {err:?}");
             return Ok(false);
         });
+        log::info!("R Help handler started successfully");
 
         // Send the help event channel to the main R thread so it can
         // emit help events, to be delivered over the help comm.
         RMain::with_mut(|main| main.set_help_fields(help_event_tx, r_port));
+        log::info!("Help fields set in RMain");
 
         Ok(true)
     })
 }
 
-fn handle_comm_open_environment(comm: CommSocket) -> amalthea::Result<bool> {
-    r_task(|| {
-        // Start the R Environment handler
-        unwrap!(REnvironment::start(comm), Err(err) => {
-            log::error!("Could not start R Environment handler: {err:?}");
-            return Ok(false);
-        });
 
-        Ok(true)
-    })
-}

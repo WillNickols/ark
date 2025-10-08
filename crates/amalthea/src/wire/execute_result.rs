@@ -22,6 +22,9 @@ pub struct ExecuteResult {
 
     /// Optional additional metadata
     pub metadata: Value,
+
+    /// Optional transient data (added for VSCode compatibility)
+    pub transient: Value,
 }
 
 impl MessageType for ExecuteResult {

@@ -213,6 +213,7 @@ impl ShellHandler for Shell {
                 execution_count: self.execution_count,
                 data,
                 metadata: json!({}),
+                transient: json!({}),
             }))
             .unwrap();
 

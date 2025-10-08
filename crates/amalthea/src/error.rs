@@ -30,15 +30,16 @@ pub enum Error {
     CreateSpecFailed(std::io::Error),
     WriteSpecFailed(std::io::Error),
     HmacKeyInvalid(String, crypto_common::InvalidLength),
-    CreateSocketFailed(String, zmq::Error),
-    SocketBindError(String, String, zmq::Error),
-    SocketConnectError(String, String, zmq::Error),
-    UnsupportedSocketType(zmq::SocketType),
+    // ZMQ-specific errors removed:
+    // CreateSocketFailed(String, zmq::Error),
+    // SocketBindError(String, String, zmq::Error),
+    // SocketConnectError(String, String, zmq::Error),
+    // UnsupportedSocketType(zmq::SocketType),
+    // ZmqError(String, zmq::Error),
+    // CannotLockSocket(String, String),
     UnsupportedMessage(Message, String),
     SendError(String),
     ReceiveError(String),
-    ZmqError(String, zmq::Error),
-    CannotLockSocket(String, String),
     SysError(String, String),
     UnknownCommName(String),
     UnknownCommId(String),
@@ -137,30 +138,6 @@ impl fmt::Display for Error {
                     err
                 )
             },
-            Error::CreateSocketFailed(str, err) => {
-                write!(f, "Could not create ZeroMQ socket '{}': {}", str, err)
-            },
-            Error::SocketBindError(name, endpoint, err) => {
-                write!(
-                    f,
-                    "Could not bind to ZeroMQ socket '{}' at '{}': {}",
-                    name, endpoint, err
-                )
-            },
-            Error::SocketConnectError(name, endpoint, err) => {
-                write!(
-                    f,
-                    "Could not connect to ZeroMQ socket '{}' at '{}': {}",
-                    name, endpoint, err
-                )
-            },
-            Error::UnsupportedSocketType(socket_type) => {
-                write!(
-                    f,
-                    "Attempt to create unsupported ZeroMQ socket type: {:?}",
-                    socket_type
-                )
-            },
             Error::UnsupportedMessage(msg, socket) => {
                 write!(f, "Unsupported message received on '{}': {:?}", socket, msg)
             },
@@ -169,12 +146,6 @@ impl fmt::Display for Error {
             },
             Error::ReceiveError(err) => {
                 write!(f, "{}", err)
-            },
-            Error::ZmqError(name, err) => {
-                write!(f, "ZeroMQ protocol error on {} socket: {}", name, err)
-            },
-            Error::CannotLockSocket(name, op) => {
-                write!(f, "Cannot lock ZeroMQ socket '{}' for {}", name, op)
             },
             Error::SysError(context, message) => {
                 write!(f, "{} failed: system/libc error '{}'", context, message)

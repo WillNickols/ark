@@ -188,7 +188,7 @@ impl RDataExplorer {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             id.clone(),
-            String::from("positron.dataExplorer"),
+            String::from("erdos.dataExplorer"),
         );
 
         // To be able to `Send` the `data` to the thread to be owned by the data

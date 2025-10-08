@@ -1639,24 +1639,67 @@ impl RMain {
     fn reply_execute_request(&mut self, req: ActiveReadConsoleRequest, prompt_info: &PromptInfo) {
         let prompt = &prompt_info.input_prompt;
 
-        let (reply, result) = if prompt_info.incomplete {
+        let (reply, result, error_occurred) = if prompt_info.incomplete {
             log::trace!("Got prompt {} signaling incomplete request", prompt);
-            (new_incomplete_reply(&req.request, req.exec_count), None)
+            (new_incomplete_reply(&req.request, req.exec_count), None, false)
         } else if prompt_info.input_request {
             unreachable!();
         } else {
             log::trace!("Got R prompt '{}', completing execution", prompt);
 
-            self.make_execute_reply_error(req.exec_count)
-                .unwrap_or_else(|| self.make_execute_reply(req.exec_count))
+            // Try to create an error reply first, if an error occurred
+            log::info!("🎬 Creating execute reply for exec_count={}", req.exec_count);
+            if let Some((reply, result)) = self.make_execute_reply_error(req.exec_count) {
+                log::info!("🎬 -> Error reply generated");
+                (reply, result, true)
+            } else {
+                log::info!("🎬 -> Success reply, calling make_execute_reply");
+                let (reply, result) = self.make_execute_reply(req.exec_count);
+                log::info!("🎬 -> make_execute_reply returned, has_result={}", result.is_some());
+                (reply, result, false)
+            }
         };
 
         if let Some(result) = result {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut f = OpenOptions::new().create(true).append(true).open("/tmp/ark_write_console.log").ok();
+            if let Some(ref mut f) = f {
+                let _ = writeln!(f, "[SEND] Sending ExecuteResult to IOPub channel");
+            }
             self.iopub_tx.send(result).unwrap();
+            if let Some(ref mut f) = f {
+                let _ = writeln!(f, "[SEND] ExecuteResult sent successfully");
+            }
+        } else {
+            use std::fs::OpenOptions;
+            use std::io::Write;
+            let mut f = OpenOptions::new().create(true).append(true).open("/tmp/ark_write_console.log").ok();
+            if let Some(ref mut f) = f {
+                let _ = writeln!(f, "[SEND] No ExecuteResult (data was empty)");
+            }
         }
 
         log::trace!("Sending `execute_reply`: {reply:?}");
         req.reply_tx.send(reply).unwrap();
+
+        // If an error occurred and stop_on_error is true, flush the execution queue
+        if error_occurred && req.request.stop_on_error {
+            log::info!("Error occurred with stop_on_error=true, flushing execution queue");
+            let mut discarded_count = 0;
+            
+            // Drain the queue - discard all pending requests
+            // Note: This includes ExecuteCode, Shutdown, and DebugCommand requests.
+            // In practice, ExecuteCode requests are what pile up. Shutdown/Debug requests
+            // are rare and will be retried if needed.
+            while let Ok(_) = self.r_request_rx.try_recv() {
+                discarded_count += 1;
+            }
+            
+            if discarded_count > 0 {
+                log::info!("Discarded {} pending requests from queue (stop_on_error=true)", discarded_count);
+            }
+        }
     }
 
     fn make_execute_reply_error(
@@ -1726,6 +1769,15 @@ impl RMain {
         &mut self,
         exec_count: u32,
     ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut f = OpenOptions::new().create(true).append(true).open("/tmp/ark_write_console.log").ok();
+        if let Some(ref mut f) = f {
+            let _ = writeln!(f, "[make_execute_reply] START exec_count={}", exec_count);
+            let _ = writeln!(f, "[make_execute_reply] autoprint_output.len()={}", self.autoprint_output.len());
+            let _ = writeln!(f, "[make_execute_reply] autoprint_output={:?}", self.autoprint_output);
+        }
+        
         // TODO: Implement rich printing of certain outputs.
         // Will we need something similar to the RStudio model,
         // where we implement custom print() methods? Or can
@@ -1745,6 +1797,8 @@ impl RMain {
         }
         if autoprint.len() != 0 {
             data.insert("text/plain".to_string(), json!(autoprint));
+        } else {
+            log::info!("⚠️  autoprint_output is empty - no execute_result will be generated");
         }
 
         // Include HTML representation of data.frame
@@ -1762,14 +1816,26 @@ impl RMain {
         }
 
         let reply = new_execute_reply(exec_count);
+        
+        if let Some(ref mut f) = f {
+            let _ = writeln!(f, "[make_execute_reply] data.len()={}", data.len());
+            if !data.is_empty() {
+                let _ = writeln!(f, "[make_execute_reply] data keys: {:?}", data.keys().collect::<Vec<_>>());
+            }
+        }
 
         let result = (data.len() > 0).then(|| {
             IOPubMessage::ExecuteResult(ExecuteResult {
                 execution_count: exec_count,
                 data: serde_json::Value::Object(data),
                 metadata: json!({}),
+                transient: json!({}),
             })
         });
+        
+        if let Some(ref mut f) = f {
+            let _ = writeln!(f, "[make_execute_reply] END result.is_some()={}", result.is_some());
+        }
 
         (reply, result)
     }
@@ -1895,6 +1961,12 @@ impl RMain {
 
             // Handle last expression
             if r_main.pending_lines.is_empty() {
+                use std::fs::OpenOptions;
+                use std::io::Write;
+                let mut f = OpenOptions::new().create(true).append(true).open("/tmp/ark_write_console.log").ok();
+                if let Some(ref mut f) = f {
+                    let _ = writeln!(f, "[AUTOPRINT] Adding to autoprint_output: {:?}", &content[..content.len().min(50)]);
+                }
                 r_main.autoprint_output.push_str(&content);
                 return;
             }

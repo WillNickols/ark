@@ -42,7 +42,7 @@ impl ReticulateService {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
-            String::from("positron.reticulate"),
+            String::from("erdos.reticulate"),
         );
 
         {

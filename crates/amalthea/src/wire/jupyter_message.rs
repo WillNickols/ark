@@ -19,7 +19,7 @@ use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::ui_comm::UiFrontendRequest;
 use crate::error::Error;
 use crate::session::Session;
-use crate::socket::socket::Socket;
+// use crate::socket::socket::Socket; // ZMQ-based, no longer used
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
@@ -53,9 +53,6 @@ use crate::wire::wire_message::WireMessage;
 /// Represents a Jupyter message
 #[derive(Debug, Clone)]
 pub struct JupyterMessage<T> {
-    /// The ZeroMQ identities (for ROUTER sockets)
-    pub zmq_identities: Vec<Vec<u8>>,
-
     /// The header for this message
     pub header: JupyterHeader,
 
@@ -301,29 +298,13 @@ impl TryFrom<&WireMessage> for Message {
 }
 
 impl Message {
-    pub fn read_from_socket(socket: &Socket) -> Result<Self, Error> {
-        let msg = WireMessage::read_from_socket(socket)?;
-        Message::try_from(&msg)
-    }
-
-    pub fn send(&self, socket: &Socket) -> Result<(), Error> {
-        let msg = WireMessage::try_from(self)?;
-        msg.send(socket)?;
-        Ok(())
-    }
+    // All ZMQ-based methods removed - use WebSocket transport
 }
 
 impl<T> JupyterMessage<T>
 where
     T: ProtocolMessage,
 {
-    /// Sends this Jupyter message to the designated ZeroMQ socket.
-    pub fn send(self, socket: &Socket) -> Result<(), Error> {
-        let msg = WireMessage::try_from(&self)?;
-        msg.send(socket)?;
-        Ok(())
-    }
-
     /// Create a new Jupyter message, optionally as a child (reply) to an
     /// existing message.
     pub fn create(
@@ -332,7 +313,6 @@ where
         session: &Session,
     ) -> JupyterMessage<T> {
         JupyterMessage::<T> {
-            zmq_identities: Vec::new(),
             header: JupyterHeader::create(
                 T::message_type(),
                 session.session_id.clone(),
@@ -343,14 +323,13 @@ where
         }
     }
 
-    /// Create a new Jupyter message with a specific ZeroMQ identity.
+    /// Create a new Jupyter message with a specific originator.
     pub fn create_with_identity(
         originator: Originator,
         content: T,
         session: &Session,
     ) -> JupyterMessage<T> {
         JupyterMessage::<T> {
-            zmq_identities: originator.zmq_identities,
             header: JupyterHeader::create(
                 T::message_type(),
                 session.session_id.clone(),
@@ -359,47 +338,6 @@ where
             parent_header: Some(originator.header),
             content,
         }
-    }
-
-    /// Sends a reply to the message; convenience method combining creating the
-    /// reply and sending it.
-    pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> crate::Result<()> {
-        let reply = self.reply_msg(content, &socket.session)?;
-        reply.send(&socket)
-    }
-
-    /// Sends an error reply to the message.
-    pub fn send_error<R: ProtocolMessage>(
-        &self,
-        exception: Exception,
-        socket: &Socket,
-    ) -> crate::Result<()> {
-        let reply = self.error_reply::<R>(exception, &socket.session);
-        reply.send(&socket)
-    }
-
-    pub fn send_execute_error(
-        &self,
-        exception: Exception,
-        exec_count: u32,
-        socket: &Socket,
-    ) -> crate::Result<()> {
-        let rep = ExecuteReplyException {
-            status: Status::Error,
-            execution_count: exec_count,
-            exception,
-        };
-        self.send_reply(rep, socket)
-    }
-
-    /// Create a raw reply message to this message.
-    fn reply_msg<R: ProtocolMessage>(
-        &self,
-        content: R,
-        session: &Session,
-    ) -> Result<WireMessage, Error> {
-        let reply = self.create_reply(content, session);
-        WireMessage::try_from(&reply)
     }
 
     /// Create a reply to this message with the given content.
@@ -412,7 +350,6 @@ where
         // (given as an argument), not the client session (which we could
         // otherwise copy from the message itself)
         JupyterMessage::<R> {
-            zmq_identities: self.zmq_identities.clone(),
             header: JupyterHeader::create(
                 R::message_type(),
                 session.session_id.clone(),
@@ -434,7 +371,6 @@ where
         session: &Session,
     ) -> JupyterMessage<ErrorReply> {
         JupyterMessage::<ErrorReply> {
-            zmq_identities: self.zmq_identities.clone(),
             header: JupyterHeader::create(
                 R::message_type(),
                 session.session_id.clone(),

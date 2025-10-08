@@ -257,7 +257,7 @@ mod tests {
         let comm_socket = CommSocket::new(
             CommInitiator::FrontEnd,
             String::from("test-ui-comm-id"),
-            String::from("positron.UI"),
+            String::from("erdos.ui"),
         );
 
         // Communication channel between the main thread and the Amalthea

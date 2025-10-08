@@ -64,7 +64,7 @@ impl RConnection {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
-            String::from("positron.connection"),
+            String::from("erdos.connection"),
         );
 
         let connection = Self {

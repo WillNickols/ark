@@ -63,7 +63,7 @@ thread_local! {
   static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
 }
 
-const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
+const POSITRON_PLOT_CHANNEL_ID: &str = "erdos.plot";
 
 // Expose thread initialization via function so we can keep the structs private
 pub(crate) fn init_graphics_device(

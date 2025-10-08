@@ -28,7 +28,7 @@ fn test_help_comm() {
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-help-comm-id"),
-        String::from("positron.help"),
+        String::from("erdos.help"),
     );
 
     let incoming_tx = comm.incoming_tx.clone();
