@@ -305,6 +305,7 @@ dependencies = [
  "async-trait",
  "base64 0.21.0",
  "bus",
+ "bytes",
  "cc",
  "cfg-if",
  "chrono",

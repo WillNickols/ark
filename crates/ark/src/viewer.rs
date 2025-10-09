@@ -38,7 +38,7 @@ fn emit_html_output_jupyter(
     });
 
     // Emit the HTML output on IOPub for delivery to the client
-    let message = IOPubMessage::DisplayData(DisplayData {
+    let message = IOPubMessage::DisplayData(None, DisplayData {
         data: output,
         metadata: serde_json::Value::Null,
         transient: serde_json::Value::Null,

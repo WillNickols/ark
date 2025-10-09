@@ -109,15 +109,60 @@ impl Shell {
         &self,
         req: &CompleteRequest,
     ) -> amalthea::Result<CompleteReply> {
-        // Temporarily disabled completion
-        let cursor_pos = req.cursor_pos as usize;
-        Ok(CompleteReply {
-            matches: Vec::new(),
-            status: Status::Ok,
-            cursor_start: cursor_pos as u32,
-            cursor_end: cursor_pos as u32,
-            metadata: json!({}),
-        })
+        use harp::exec::RFunction;
+        use harp::exec::RFunctionExt;
+        
+        let code = &req.code;
+        let cursor_pos = req.cursor_pos as i32;
+        
+        unsafe {
+            let result = RFunction::new("", ".ps.completions.getJupyterCompletions")
+                .add(code.as_str())
+                .add(cursor_pos)
+                .call();
+            
+            match result {
+                Ok(value) => {
+                    let matches: Vec<String> = RFunction::new("base", "[[")
+                        .add(value.sexp)
+                        .add("matches")
+                        .call()
+                        .and_then(|x| x.try_into())
+                        .unwrap_or_default();
+                    
+                    let cursor_start: i32 = RFunction::new("base", "[[")
+                        .add(value.sexp)
+                        .add("cursor_start")
+                        .call()
+                        .and_then(|x| x.try_into())
+                        .unwrap_or(cursor_pos);
+                    
+                    let cursor_end: i32 = RFunction::new("base", "[[")
+                        .add(value.sexp)
+                        .add("cursor_end")
+                        .call()
+                        .and_then(|x| x.try_into())
+                        .unwrap_or(cursor_pos);
+                    
+                    Ok(CompleteReply {
+                        matches,
+                        status: Status::Ok,
+                        cursor_start: cursor_start as u32,
+                        cursor_end: cursor_end as u32,
+                        metadata: json!({}),
+                    })
+                }
+                Err(_) => {
+                    Ok(CompleteReply {
+                        matches: vec![],
+                        status: Status::Ok,
+                        cursor_start: cursor_pos as u32,
+                        cursor_end: cursor_pos as u32,
+                        metadata: json!({}),
+                    })
+                }
+            }
+        }
     }
 }
 

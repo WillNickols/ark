@@ -678,9 +678,12 @@ impl RMain {
         &self.iopub_tx
     }
 
-    fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
+    fn init_execute_request(&mut self, req: &ExecuteRequest, parent: &Originator) -> (ConsoleInput, u32) {
         // Reset the autoprint buffer
         self.autoprint_output = String::new();
+
+        // Set the parent header for plot attribution
+        crate::plots::graphics_device::set_parent_header(Some(parent.header.clone()));
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -1035,6 +1038,9 @@ impl RMain {
             // so that the `parent` message is set correctly in any Jupyter messages)
             graphics_device::on_did_execute_request();
 
+            // Clear the parent header now that execution is complete
+            graphics_device::set_parent_header(None);
+
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
             self.reply_execute_request(req, &info);
@@ -1058,7 +1064,7 @@ impl RMain {
         let input = match req {
             RRequest::ExecuteCode(exec_req, originator, reply_tx) => {
                 // Extract input from request
-                let (input, exec_count) = { self.init_execute_request(&exec_req) };
+                let (input, exec_count) = { self.init_execute_request(&exec_req, &originator) };
 
                 // Save `ExecuteCode` request so we can respond to it at next prompt
                 self.active_request = Some(ActiveReadConsoleRequest {

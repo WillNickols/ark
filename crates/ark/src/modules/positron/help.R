@@ -46,22 +46,12 @@ help <- function(topic, package = NULL) {
 # found.
 #' @export
 .ps.help.showHelpTopic <- function(topic) {
-    cat(sprintf("[R HELP] showHelpTopic called with topic: '%s'\n", topic), file = stderr())
-    
     info <- split_topic(topic)
     topic <- info$topic
     package <- info$package
-    
-    cat(sprintf("[R HELP] Parsed topic: '%s', package: '%s'\n", topic, 
-        if (is.null(package)) "NULL" else package), file = stderr())
 
     # Try to find help on the topic.
     results <- help(topic, package)
-    
-    cat(sprintf("[R HELP] help() returned %d results\n", length(results)), file = stderr())
-    if (length(results) > 0) {
-        cat(sprintf("[R HELP] First result: %s\n", as.character(results)[1]), file = stderr())
-    }
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -71,6 +61,24 @@ help <- function(topic, package = NULL) {
         if (length(results) > 1) {
             results <- results[1]
         }
+        
+        # If package wasn't explicitly specified, extract it from the help result path
+        # and load the package namespace before displaying help (like Rao does)
+        if (is.null(package)) {
+            help_path <- as.character(results)[1]
+            package <- basename(dirname(dirname(help_path)))
+        }
+        
+        # Load the package namespace so help can be displayed properly
+        if (!is.null(package) && nzchar(package)) {
+            requireNamespace(package, quietly = TRUE)
+            
+            # Call help() again to get fresh results with the package now loaded
+            # This ensures print() will display the help properly instead of showing
+            # "not in any loaded package" message
+            results <- help(topic, package)
+        }
+        
         print(results)
     }
 

@@ -14,6 +14,7 @@ use actix_web::App;
 use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::HttpServer;
+use bytes::Bytes;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use http::uri::PathAndQuery;
@@ -135,6 +136,24 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
         .map(PathAndQuery::as_str)
         .unwrap_or_default();
 
+    // Rewrite help paths: /PACKAGE/help/TOPIC -> /library/PACKAGE/help/TOPIC
+    let target_path_and_query = if let Some(path) = req.uri().path().strip_prefix("/") {
+        // Check if path matches PACKAGE/help/TOPIC pattern
+        if let Some((package, rest)) = path.split_once("/help/") {
+            // Check if it's NOT already /library/...
+            if !target_path_and_query.starts_with("/library/") {
+                let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+                format!("/library/{}/help/{}{}", package, rest, query)
+            } else {
+                target_path_and_query.to_string()
+            }
+        } else {
+            target_path_and_query.to_string()
+        }
+    } else {
+        target_path_and_query.to_string()
+    };
+
     // Construct the target URL string.
     let target_url_string = format!("http://localhost:{target_port}{target_path_and_query}");
 
@@ -202,13 +221,28 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
                 Some(replacement_embedded_file) => {
                     http_response_builder.body(replacement_embedded_file.data)
                 },
-                None => http_response_builder.body(match response.bytes().await {
-                    Ok(body) => body,
-                    Err(error) => {
-                        log::error!("Error proxying {}: {}", target_url_string, error);
-                        return HttpResponse::BadGateway().finish();
-                    },
-                }),
+                None => {
+                    let body = match response.bytes().await {
+                        Ok(body) => body,
+                        Err(error) => {
+                            log::error!("Error proxying {}: {}", target_url_string, error);
+                            return HttpResponse::BadGateway().finish();
+                        },
+                    };
+
+                    // Inject keydown handling for HTML content
+                    let body = if let Some(ct) = content_type {
+                        if ct.to_str().unwrap_or("").contains("text/html") {
+                            inject_help_script(&body)
+                        } else {
+                            body
+                        }
+                    } else {
+                        body
+                    };
+
+                    http_response_builder.body(body)
+                },
             }
         },
         // Error.
@@ -276,6 +310,50 @@ async fn preview_img(params: web::Query<PreviewRdParams>) -> HttpResponse {
     };
 
     HttpResponse::Ok().content_type(mime_str).body(content)
+}
+
+fn inject_help_script(body: &Bytes) -> Bytes {
+    const SCRIPT: &[u8] = br#"<script>
+(function() {
+    document.addEventListener('keydown', function(e) {
+        if (window.parent !== window) {
+            window.parent.postMessage({
+                id: 'erdos-help-keydown',
+                code: e.code,
+                key: e.key,
+                ctrlKey: e.ctrlKey,
+                metaKey: e.metaKey,
+                shiftKey: e.shiftKey,
+                altKey: e.altKey
+            }, '*');
+        }
+    });
+    
+    window.addEventListener('message', function(e) {
+        if (e.data.id === 'erdos-help-copy-selection') {
+            window.parent.postMessage({
+                id: 'erdos-help-copy-selection',
+                selection: window.getSelection().toString()
+            }, '*');
+        }
+    });
+    
+    window.parent.postMessage({ id: 'erdos-help-complete' }, '*');
+})();
+</script>"#;
+
+    // Find </body> or </html> and inject before it
+    let body_str = String::from_utf8_lossy(body);
+    let injected = if let Some(pos) = body_str.find("</body>") {
+        body_str.replacen("</body>", &format!("{}</body>", String::from_utf8_lossy(SCRIPT)), 1)
+    } else if let Some(pos) = body_str.find("</html>") {
+        body_str.replacen("</html>", &format!("{}</html>", String::from_utf8_lossy(SCRIPT)), 1)
+    } else {
+        // No body/html tags, append at end
+        format!("{}{}", body_str, String::from_utf8_lossy(SCRIPT))
+    };
+
+    Bytes::from(injected.into_bytes())
 }
 
 // Conversion helper between reqwest and actix-web's `HeaderValue`

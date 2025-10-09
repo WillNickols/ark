@@ -86,14 +86,14 @@ pub fn convert_iopub_to_json(msg: &IOPubMessage, session: &Session) -> Option<St
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
         },
-        IOPubMessage::DisplayData(display_data) => {
-            let jupyter_msg = JupyterMessage::create(display_data.clone(), None, session);
+        IOPubMessage::DisplayData(parent, display_data) => {
+            let jupyter_msg = JupyterMessage::create(display_data.clone(), parent.clone(), session);
             WireMessage::try_from(&jupyter_msg)
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
         },
-        IOPubMessage::UpdateDisplayData(update_display_data) => {
-            let jupyter_msg = JupyterMessage::create(update_display_data.clone(), None, session);
+        IOPubMessage::UpdateDisplayData(parent, update_display_data) => {
+            let jupyter_msg = JupyterMessage::create(update_display_data.clone(), parent.clone(), session);
             WireMessage::try_from(&jupyter_msg)
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
@@ -185,14 +185,14 @@ pub async fn iopub_broadcaster(
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
                     },
-                    IOPubMessage::DisplayData(display_data) => {
-                        let jupyter_msg = JupyterMessage::create(display_data.clone(), None, &session);
+                    IOPubMessage::DisplayData(parent, display_data) => {
+                        let jupyter_msg = JupyterMessage::create(display_data.clone(), parent.clone(), &session);
                         WireMessage::try_from(&jupyter_msg)
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
                     },
-                    IOPubMessage::UpdateDisplayData(update_display_data) => {
-                        let jupyter_msg = JupyterMessage::create(update_display_data.clone(), None, &session);
+                    IOPubMessage::UpdateDisplayData(parent, update_display_data) => {
+                        let jupyter_msg = JupyterMessage::create(update_display_data.clone(), parent.clone(), &session);
                         WireMessage::try_from(&jupyter_msg)
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())

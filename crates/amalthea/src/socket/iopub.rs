@@ -39,8 +39,8 @@ pub enum IOPubMessage {
     CommMsgReply(JupyterHeader, CommWireMsg),
     CommMsgEvent(CommWireMsg),
     CommClose(CommClose),
-    DisplayData(DisplayData),
-    UpdateDisplayData(UpdateDisplayData),
+    DisplayData(Option<JupyterHeader>, DisplayData),
+    UpdateDisplayData(Option<JupyterHeader>, UpdateDisplayData),
     Wait(Wait),
 }
 

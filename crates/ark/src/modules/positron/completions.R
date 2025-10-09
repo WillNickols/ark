@@ -201,3 +201,36 @@ customCompletionHandlers <- new.env(parent = emptyenv())
     # Fall back to default implementation.
     .ps.completions.formalNamesDefault(callable)
 }
+
+#' @export
+.ps.completions.getJupyterCompletions <- function(code, cursor_pos) {
+    # Extract code up to cursor position
+    code_at_cursor <- if (cursor_pos <= nchar(code)) {
+        substring(code, 1, cursor_pos)
+    } else {
+        code
+    }
+    
+    # Use R's built-in completion (following rao's approach)
+    # All calls must happen in the same R context to maintain state
+    utils:::.assignLinebuffer(code_at_cursor)
+    utils:::.assignEnd(nchar(code_at_cursor))
+    token <- utils:::.guessTokenFromLine()
+    utils:::.completeToken()
+    completions <- utils:::.retrieveCompletions()
+    
+    # Calculate cursor_start from token length
+    cursor_start <- if (nchar(token) > 0) {
+        cursor_pos - nchar(token)
+    } else {
+        cursor_pos
+    }
+    
+    # Return a list matching CompleteReply structure
+    list(
+        matches = as.character(completions),
+        cursor_start = as.integer(cursor_start),
+        cursor_end = as.integer(cursor_pos),
+        token = as.character(token)
+    )
+}

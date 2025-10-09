@@ -28,6 +28,7 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
+use amalthea::wire::header::JupyterHeader;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
@@ -169,6 +170,9 @@ struct DeviceContext {
 
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
+
+    /// The current execute request's parent header for proper plot attribution
+    parent_header: RefCell<Option<JupyterHeader>>,
 }
 
 impl DeviceContext {
@@ -191,6 +195,7 @@ impl DeviceContext {
                 pixel_ratio: 1.,
                 format: PlotRenderFormat::Png,
             }),
+            parent_header: RefCell::new(None),
         }
     }
 
@@ -555,8 +560,9 @@ impl DeviceContext {
 
         log::info!("Sending display data to IOPub.");
 
+        let parent = self.parent_header.borrow().clone();
         self.iopub_tx
-            .send(IOPubMessage::DisplayData(DisplayData {
+            .send(IOPubMessage::DisplayData(parent, DisplayData {
                 data,
                 metadata,
                 transient,
@@ -635,8 +641,9 @@ impl DeviceContext {
 
         log::info!("Sending update display data to IOPub for `id` {id}.");
 
+        let parent = self.parent_header.borrow().clone();
         self.iopub_tx
-            .send(IOPubMessage::UpdateDisplayData(UpdateDisplayData {
+            .send(IOPubMessage::UpdateDisplayData(parent, UpdateDisplayData {
                 data,
                 metadata,
                 transient,
@@ -784,6 +791,13 @@ impl From<&PlotId> for RObject {
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn on_process_idle_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
+}
+
+/// Set the current execute request's parent header for proper plot attribution
+pub(crate) fn set_parent_header(parent: Option<JupyterHeader>) {
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        *cell.parent_header.borrow_mut() = parent;
+    });
 }
 
 /// Hook applied after a code chunk has finished executing
