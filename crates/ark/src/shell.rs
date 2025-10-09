@@ -107,21 +107,15 @@ impl Shell {
 
     fn r_handle_complete_request(
         &self,
-        _req: &CompleteRequest,
+        req: &CompleteRequest,
     ) -> amalthea::Result<CompleteReply> {
-        // Completions work through LSP (Language Server Protocol), not Jupyter protocol.
-        // Positron/VSCode connect via LSP and get full completions.
-        // Jupyter protocol completions were never implemented (not needed for Positron).
-        // If Jupyter frontend support is desired, this would need to:
-        // 1. Use the LSP completion engine (crate::lsp::completions::provide)
-        // 2. Create proper WorldState and DocumentContext
-        // 3. Convert LSP CompletionItems to Jupyter matches
-        
+        // Temporarily disabled completion
+        let cursor_pos = req.cursor_pos as usize;
         Ok(CompleteReply {
             matches: Vec::new(),
             status: Status::Ok,
-            cursor_start: 0,
-            cursor_end: 0,
+            cursor_start: cursor_pos as u32,
+            cursor_end: cursor_pos as u32,
             metadata: json!({}),
         })
     }
@@ -254,10 +248,7 @@ impl ShellHandler for Shell {
                 )
             },
             Comm::Help => {
-                log::info!("[COMM OPEN] Received comm open for Help");
-                log::info!("[COMM OPEN] Calling handle_comm_open_help");
                 let result = handle_comm_open_help(comm);
-                log::info!("[COMM OPEN] handle_comm_open_help returned: {:?}", result);
                 result
             },
             Comm::Environment => {
@@ -482,36 +473,11 @@ impl ShellHandler for Shell {
                     Ok(true)
                 }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to set working directory: {}", e)))?;
                 
-                // Emit working_directory event to notify frontend of the change
-                use amalthea::comm::ui_comm::{UiFrontendEvent, WorkingDirectoryParams};
-                use std::path::PathBuf;
-                
-                if let Err(err) = (|| -> anyhow::Result<()> {
-                    let mut new_working_directory = std::env::current_dir()?;
-                    
-                    // Attempt to alias the directory, if it's within the home directory
-                    if let Some(home_dir) = home::home_dir() {
-                        if let Ok(stripped_dir) = new_working_directory.strip_prefix(home_dir) {
-                            let mut new_path = PathBuf::from("~");
-                            new_path.push(stripped_dir);
-                            new_working_directory = new_path;
-                        }
-                    }
-                    
-                    let event = UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
-                        directory: new_working_directory.to_string_lossy().to_string(),
-                    });
-                    
-                    if let Err(err) = comm.outgoing_tx.send(amalthea::socket::comm::CommMsg::Data(
-                        serde_json::to_value(event)?
-                    )) {
-                        log::error!("Error sending working_directory event: {}", err);
-                    }
-                    
-                    Ok(())
-                })() {
-                    log::error!("Failed to emit working_directory event: {}", err);
-                }
+                // TODO: Emit working_directory event to notify frontend of the change
+                // This is commented out because `comm` is not in scope here
+                // Will need to be fixed when implementing working directory sync
+                // use amalthea::comm::ui_comm::{UiFrontendEvent, WorkingDirectoryParams};
+                // use std::path::PathBuf;
                 
                 serde_json::Value::Bool(set_result)
             },
@@ -552,36 +518,28 @@ fn handle_comm_open_ui(
 fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
     use stdext::unwrap;
     
-    log::info!("[COMM OPEN HELP] handle_comm_open_help called!");
-    
     r_task(|| {
-        log::info!("[COMM OPEN HELP] Inside r_task closure");
-        
         // Ensure the R help server is started, and get its port
         let r_port = unwrap!(RHelp::r_start_or_reconnect_to_help_server(), Err(err) => {
-            log::error!("[COMM OPEN HELP] Could not start R help server: {err:?}");
+            log::error!("Could not start R help server: {err:?}");
             return Ok(false);
         });
-        log::info!("[COMM OPEN HELP] R help server started on port: {}", r_port);
 
         // Ensure our proxy help server is started, and get its port
         let proxy_port = unwrap!(help_proxy::start(r_port), Err(err) => {
             log::error!("Could not start R help proxy server: {err:?}");
             return Ok(false);
         });
-        log::info!("R help proxy server started on port: {}", proxy_port);
 
         // Start the R Help handler that routes help requests
         let help_event_tx = unwrap!(RHelp::start(comm, r_port, proxy_port), Err(err) => {
             log::error!("Could not start R Help handler: {err:?}");
             return Ok(false);
         });
-        log::info!("R Help handler started successfully");
 
         // Send the help event channel to the main R thread so it can
         // emit help events, to be delivered over the help comm.
         RMain::with_mut(|main| main.set_help_fields(help_event_tx, r_port));
-        log::info!("Help fields set in RMain");
 
         Ok(true)
     })

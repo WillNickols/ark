@@ -67,12 +67,11 @@ help <- function(topic, package = NULL) {
     # If we are running ark tests, don't show the results as this requires
     # `ps_browse_url()` which needs a full `RMain` instance.
     if (length(results) > 0 && !in_ark_tests()) {
-        cat("[R HELP] About to call print(results) which should trigger browseURL\n", file = stderr())
+        # Force selection of first result to avoid console menu
+        if (length(results) > 1) {
+            results <- results[1]
+        }
         print(results)
-        cat("[R HELP] print(results) completed\n", file = stderr())
-    } else {
-        cat(sprintf("[R HELP] Skipping print(results) - length: %d, in_ark_tests: %s\n", 
-            length(results), in_ark_tests()), file = stderr())
     }
 
     # Return whether we found any help.

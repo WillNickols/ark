@@ -222,6 +222,8 @@ pub struct RMain {
     help_event_tx: Option<Sender<HelpEvent>>,
     /// R help port
     help_port: Option<u16>,
+    /// Help proxy port
+    help_proxy_port: Option<u16>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
@@ -585,6 +587,7 @@ impl RMain {
             error_traceback: Vec::new(),
             help_event_tx: None,
             help_port: None,
+            help_proxy_port: None,
             lsp_events_tx: None,
             lsp_virtual_documents: HashMap::new(),
             dap: RMainDap::new(dap),
@@ -2082,9 +2085,25 @@ impl RMain {
         &self.comm_manager_tx
     }
 
-    pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
+    pub fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
         self.help_event_tx = Some(help_event_tx);
         self.help_port = Some(help_port);
+    }
+
+    pub fn set_help_port(&mut self, help_port: u16) {
+        self.help_port = Some(help_port);
+    }
+
+    pub fn get_help_port(&self) -> Option<u16> {
+        self.help_port
+    }
+
+    pub fn set_help_proxy_port(&mut self, proxy_port: u16) {
+        self.help_proxy_port = Some(proxy_port);
+    }
+
+    pub fn get_help_proxy_port(&self) -> Option<u16> {
+        self.help_proxy_port
     }
 
     pub(crate) fn send_help_event(&self, event: HelpEvent) -> anyhow::Result<()> {

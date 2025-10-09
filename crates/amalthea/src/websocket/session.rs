@@ -187,22 +187,63 @@ async fn handle_message(
             log::warn!("history_request received but not fully implemented (returning empty)");
         },
         "comm_open" => {
-            log::info!("[AMALTHEA] Received comm_open message");
             let req: JupyterMessage<CommOpen> = JupyterMessage::try_from(&wire_msg)?;
-            log::info!("[AMALTHEA] comm_open target_name: {}, comm_id: {}", req.content.target_name, req.content.comm_id);
             let comm = req.content.target_name.parse::<Comm>()
                 .unwrap_or_else(|_| Comm::Other(req.content.target_name.clone()));
-            log::info!("[AMALTHEA] Parsed comm type, calling handle_comm_open");
             let comm_socket = CommSocket::new(CommInitiator::FrontEnd, req.content.comm_id.clone(), req.content.target_name.clone());
             let opened = shell_handler.lock().await.handle_comm_open(comm, comm_socket.clone()).await?;
-            log::info!("[AMALTHEA] handle_comm_open returned: {}", opened);
             if opened {
                 // Store the comm socket for routing future messages
                 open_comms.lock().await.insert(req.content.comm_id.clone(), comm_socket.clone());
                 
-                comm_manager_tx.send(CommManagerEvent::Opened(comm_socket, req.content.data.clone()))
+                comm_manager_tx.send(CommManagerEvent::Opened(comm_socket.clone(), req.content.data.clone()))
                     .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to send comm open: {}", e)))?;
-                log::info!("[AMALTHEA] comm_open processing complete");
+                
+                // Spawn relay task to forward outgoing messages to IOPub
+                // This is the equivalent of Python's monkey-patching of comm.send()
+                // IMPORTANT: Must use std::thread::spawn, not tokio::spawn, because
+                // outgoing_rx.recv() is a blocking crossbeam channel operation
+                let comm_id = req.content.comm_id.clone();
+                let outgoing_rx = comm_socket.outgoing_rx.clone();
+                let iopub_tx_clone = iopub_tx.clone();
+                
+                std::thread::spawn(move || {
+                    loop {
+                        match outgoing_rx.recv() {
+                            Ok(msg) => {
+                                match msg {
+                                    CommMsg::Data(data) => {
+                                        let comm_msg = CommWireMsg {
+                                            comm_id: comm_id.clone(),
+                                            data,
+                                        };
+                                        if let Err(_e) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
+                                            break;
+                                        }
+                                    },
+                                    CommMsg::Close => {
+                                        log::info!("[COMM RELAY] Received close for comm {}", comm_id);
+                                        let comm_close = CommClose {
+                                            comm_id: comm_id.clone(),
+                                        };
+                                        if let Err(e) = iopub_tx_clone.send(IOPubMessage::CommClose(comm_close)) {
+                                            log::error!("[COMM RELAY] Failed to send comm close: {}", e);
+                                        }
+                                        break;
+                                    },
+                                    CommMsg::Rpc(_, _) => {
+                                        log::warn!("[COMM RELAY] Unexpected RPC message on outgoing channel for comm {}", comm_id);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                log::info!("[COMM RELAY] Channel closed for comm {}: {}", comm_id, e);
+                                break;
+                            }
+                        }
+                    }
+                    log::info!("[COMM RELAY] Relay thread ended for comm {}", comm_id);
+                });
             }
         },
         "comm_msg" => {

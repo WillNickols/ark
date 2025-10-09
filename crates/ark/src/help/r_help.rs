@@ -124,7 +124,7 @@ impl RHelp {
                         Err(err) => {
                             // The connection with the frontend has been closed; let
                             // the thread exit.
-                            log::error!("Error receiving internal Help message: {:?}", err);
+                            warn!("Error receiving internal Help message: {:?}", err);
                             break;
                         },
                     }
@@ -208,11 +208,9 @@ impl RHelp {
     fn handle_show_help_url(&self, params: ShowHelpUrlParams) -> anyhow::Result<()> {
         let url = params.url;
         
-        log::info!("[ARK HELP] handle_show_help_url called with URL: {}", url);
 
         if !Self::is_help_url(url.as_str(), self.r_port) {
             let prefix = Self::help_url_prefix(self.r_port);
-            log::error!("[ARK HELP] URL '{}' doesn't have expected prefix '{}'", url, prefix);
             return Err(anyhow!(
                 "Help URL '{url}' doesn't have expected prefix '{prefix}'."
             ));
@@ -224,10 +222,6 @@ impl RHelp {
 
         let proxy_url = url.replace(r_prefix.as_str(), proxy_prefix.as_str());
 
-        log::info!(
-            "[ARK HELP] Sending ShowHelp event - R url: '{}', proxy url: '{}'",
-            url, proxy_url
-        );
 
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
             content: proxy_url.clone(),
@@ -236,9 +230,7 @@ impl RHelp {
         });
         let json = serde_json::to_value(msg)?;
         
-        log::info!("[ARK HELP] Sending comm message with JSON: {}", json);
         self.comm.outgoing_tx.send(CommMsg::Data(json))?;
-        log::info!("[ARK HELP] ShowHelp event sent successfully via comm channel");
 
         // The URL was sent to the frontend.
         Ok(())

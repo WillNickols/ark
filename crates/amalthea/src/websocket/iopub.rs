@@ -174,9 +174,10 @@ pub async fn iopub_broadcaster(
                     },
                     IOPubMessage::CommMsgEvent(comm_msg) => {
                         let jupyter_msg = JupyterMessage::create(comm_msg.clone(), None, &session);
-                        WireMessage::try_from(&jupyter_msg)
+                        let result = WireMessage::try_from(&jupyter_msg)
                             .ok()
-                            .and_then(|wm| serde_json::to_string(&wm).ok())
+                            .and_then(|wm| serde_json::to_string(&wm).ok());
+                        result
                     },
                     IOPubMessage::CommClose(comm_close) => {
                         let jupyter_msg = JupyterMessage::create(comm_close.clone(), None, &session);
