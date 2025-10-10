@@ -488,10 +488,12 @@ impl DeviceContext {
     }
 
     fn process_new_plot(&self, id: &PlotId) {
+        // Always send standard Jupyter display_data for compatibility with all frontends
+        self.process_new_plot_jupyter_protocol(id);
+        
+        // Additionally send Positron dynamic plot comm if in console mode with UI connected
         if self.should_use_dynamic_plots() {
             self.process_new_plot_positron(id);
-        } else {
-            self.process_new_plot_jupyter_protocol(id);
         }
     }
 
@@ -571,10 +573,12 @@ impl DeviceContext {
     }
 
     fn process_update_plot(&self, id: &PlotId) {
+        // Always send standard Jupyter update_display_data for compatibility with all frontends
+        self.process_update_plot_jupyter_protocol(id);
+        
+        // Additionally send Positron dynamic plot update if in console mode with UI connected
         if self.should_use_dynamic_plots() {
             self.process_update_plot_positron(id);
-        } else {
-            self.process_update_plot_jupyter_protocol(id);
         }
     }
 

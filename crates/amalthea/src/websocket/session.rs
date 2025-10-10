@@ -60,7 +60,6 @@ pub async fn handle_session(
     while let Some(msg_result) = read_half.next().await {
         match msg_result {
             Ok(WsMessage::Text(text)) => {
-                log::trace!("Received WebSocket message");
                 if let Err(e) = handle_message(&text, &session, &shell_handler, &control_handler, &iopub_tx, &comm_manager_tx, &write_half, &open_comms).await {
                     log::error!("Error handling message: {}", e);
                 }
@@ -91,12 +90,14 @@ async fn handle_message(
     write_half: &Arc<TokioMutex<WsWriter>>,
     open_comms: &Arc<TokioMutex<HashMap<String, CommSocket>>>,
 ) -> Result<(), Error> {
-    let wire_msg: WireMessage = serde_json::from_str(text)
+    let mut wire_msg: WireMessage = serde_json::from_str(text)
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to parse message: {}", e)))?;
     let msg_type = wire_msg.header.msg_type.as_str();
-    
-    log::trace!("Processing message type: {}", msg_type);
 
+    // Some frontends send interrupt_request with null content; normalize to empty object
+    if msg_type == "interrupt_request" && wire_msg.content.is_null() {
+        wire_msg.content = serde_json::json!({});
+    }
     match msg_type {
         "kernel_info_request" => {
             let req: JupyterMessage<crate::wire::kernel_info_request::KernelInfoRequest> =
@@ -297,13 +298,20 @@ async fn handle_message(
             let req: JupyterMessage<crate::wire::interrupt_request::InterruptRequest> =
                 JupyterMessage::try_from(&wire_msg)?;
             let handler_clone = control_handler.clone();
-            let reply = tokio::task::spawn_blocking(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 let handler = handler_clone.lock().unwrap();
                 futures::executor::block_on(handler.handle_interrupt_request())
-            }).await.ok();
-            
-            if let Some(Ok(reply)) = reply {
-                send_reply(&req, reply, session, write_half).await?;
+            }).await;
+            match result {
+                Ok(Ok(reply)) => {
+                    send_reply(&req, reply, session, write_half).await?;
+                },
+                Ok(Err(e)) => {
+                    log::error!("interrupt_request handler returned error: {:?}", e);
+                },
+                Err(e) => {
+                    log::error!("interrupt_request spawn_blocking join error: {:?}", e);
+                }
             }
         },
         "shutdown_request" => {
