@@ -56,7 +56,14 @@ impl ControlHandler for Control {
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         log::info!("Received interrupt request");
-        crate::sys::control::handle_interrupt_request();
+        
+        // Spawn a real OS thread to send the interrupt signal immediately
+        // This ensures interrupts work even if the async runtime is blocked
+        std::thread::spawn(|| {
+            log::info!("Interrupt thread: Sending SIGINT from control.rs");
+            crate::sys::control::handle_interrupt_request();
+        });
+        
         Ok(InterruptReply { status: Status::Ok })
     }
 }

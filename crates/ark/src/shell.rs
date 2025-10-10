@@ -249,7 +249,11 @@ impl ShellHandler for Shell {
             )
         }
 
-        let result = response_rx.recv().unwrap();
+        // Use spawn_blocking to avoid blocking the async runtime
+        // This allows interrupt requests to be processed while R is executing
+        let result = tokio::task::spawn_blocking(move || {
+            response_rx.recv().unwrap()
+        }).await.unwrap();
 
         result
     }
