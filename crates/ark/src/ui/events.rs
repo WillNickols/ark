@@ -38,6 +38,43 @@ pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Res
 }
 
 #[harp::register]
+pub unsafe extern "C-unwind" fn ps_ui_set_working_directory(path: SEXP) -> anyhow::Result<SEXP> {
+    use harp::exec::RFunction;
+    use harp::exec::RFunctionExt;
+    use amalthea::comm::ui_comm::WorkingDirectoryParams;
+    
+    let path_str: String = RObject::view(path).try_into()?;
+    
+    // Actually set the working directory in R
+    let result = RFunction::from("setwd")
+        .param("dir", path_str.clone())
+        .call()?;
+    
+    // Notify the frontend via UI comm event
+    let main = RMain::get();
+    if let Some(ui_comm_tx) = main.get_ui_comm_tx() {
+        // Use the same aliasing logic as refresh_working_directory
+        let mut new_working_directory = std::path::PathBuf::from(&path_str);
+        
+        // Attempt to alias the directory if it's within the home directory
+        if let Some(home_dir) = home::home_dir() {
+            if let Ok(stripped_dir) = new_working_directory.strip_prefix(home_dir) {
+                let mut new_path = std::path::PathBuf::from("~");
+                new_path.push(stripped_dir);
+                new_working_directory = new_path;
+            }
+        }
+        
+        let event = UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+            directory: new_working_directory.to_string_lossy().to_string(),
+        });
+        ui_comm_tx.send_event(event);
+    }
+    
+    Ok(result.sexp)
+}
+
+#[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
     path: SEXP,
     new_window: SEXP,

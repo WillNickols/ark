@@ -104,3 +104,8 @@
     # stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
     .ps.Call("ps_ui_debug_sleep", ms)
 }
+
+#' @export
+.ps.ui.setWorkingDirectory <- function(path) {
+    .ps.Call("ps_ui_set_working_directory", path)
+}

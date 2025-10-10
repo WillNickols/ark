@@ -405,6 +405,30 @@ impl ShellHandler for Shell {
                 }
             },
             
+            "set_working_directory" => {
+                let directory = params
+                    .and_then(|p| {
+                        // Try array access first
+                        if let Some(arr) = p.as_array() {
+                            arr.get(0).and_then(|v| v.as_str())
+                        } else {
+                            // Try object access
+                            p.get("directory").and_then(|v| v.as_str())
+                                .or_else(|| p.get("0").and_then(|v| v.as_str()))
+                                .or_else(|| p.as_str())
+                        }
+                    })
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing directory parameter")))?;
+                
+                r_task(|| -> anyhow::Result<serde_json::Value> {
+                    // Call the R function that sets directory and notifies frontend
+                    let result = RFunction::from(".ps.ui.setWorkingDirectory")
+                        .add(directory)
+                        .call()?;
+                    Ok(serde_json::Value::try_from(result)?)
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to set working directory: {}", e)))?
+            },
+            
             "show_help_topic" => {
                 let topic = params
                     .and_then(|p| p.get("topic"))
@@ -503,28 +527,6 @@ impl ShellHandler for Shell {
                 }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to parse functions: {}", e)))?;
                 
                 result
-            },
-            
-            "set_working_directory" => {
-                let directory = params
-                    .and_then(|p| p.get("directory"))
-                    .and_then(|d| d.as_str())
-                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing directory parameter")))?;
-                
-                let set_result = r_task(|| -> anyhow::Result<bool> {
-                    RFunction::from("setwd")
-                        .param("dir", directory)
-                        .call()?;
-                    Ok(true)
-                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to set working directory: {}", e)))?;
-                
-                // TODO: Emit working_directory event to notify frontend of the change
-                // This is commented out because `comm` is not in scope here
-                // Will need to be fixed when implementing working directory sync
-                // use amalthea::comm::ui_comm::{UiFrontendEvent, WorkingDirectoryParams};
-                // use std::path::PathBuf;
-                
-                serde_json::Value::Bool(set_result)
             },
             
             _ => {
