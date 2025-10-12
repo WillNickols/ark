@@ -8,5 +8,6 @@
 pub mod server;
 pub mod session;
 pub mod iopub;
+pub mod stdin;
 
 

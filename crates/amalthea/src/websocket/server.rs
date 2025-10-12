@@ -101,6 +101,37 @@ impl WebSocketServer {
             log::debug!("IOPub broadcaster thread ended");
         });
 
+        // StdIn broadcaster - runs in blocking thread and broadcasts input requests to all clients
+        let stdin_clients = clients.clone();
+        let stdin_session = session.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            while let Ok(request) = stdin_request_rx.recv() {
+                if let Some(json) = crate::websocket::stdin::convert_stdin_request_to_json(&request, &stdin_session) {
+                    let clients_clone = stdin_clients.clone();
+                    let json_clone = json.clone();
+                    rt.block_on(async move {
+                        let clients_guard = clients_clone.lock().await;
+                        let mut disconnected = Vec::new();
+                        
+                        for (i, client_ws) in clients_guard.iter().enumerate() {
+                            let mut ws = client_ws.lock().await;
+                            if let Err(e) = ws.send(WsMessage::Text(json_clone.clone())).await {
+                                log::error!("Failed to send stdin message to client {}: {}", i, e);
+                                disconnected.push(i);
+                            }
+                        }
+                        
+                        // Remove disconnected clients (in reverse order to preserve indices)
+                        for &i in disconnected.iter().rev() {
+                            let mut clients_guard = clients_clone.lock().await;
+                            clients_guard.remove(i);
+                        }
+                    });
+                }
+            }
+        });
+
         while let Ok((stream, addr)) = listener.accept().await {
             log::info!("New WebSocket connection from {}", addr);
 
@@ -118,6 +149,7 @@ impl WebSocketServer {
                     let control_handler_clone = control_handler.clone();
                     let iopub_tx_clone = iopub_tx.clone();
                     let comm_manager_tx_clone = comm_manager_tx.clone();
+                    let stdin_reply_tx_clone = stdin_reply_tx.clone();
                     let clients_clone = clients.clone();
                     let write_arc_for_removal = write_arc.clone();
 
@@ -130,6 +162,7 @@ impl WebSocketServer {
                             control_handler_clone,
                             iopub_tx_clone,
                             comm_manager_tx_clone,
+                            stdin_reply_tx_clone,
                         )
                         .await
                         {

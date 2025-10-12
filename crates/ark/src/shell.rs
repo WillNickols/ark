@@ -384,6 +384,40 @@ impl ShellHandler for Shell {
                 }
             },
             
+            "check_missing_packages" => {
+                let file_path = params
+                    .and_then(|p| p.get("file_path"))
+                    .and_then(|f| f.as_str())
+                    .unwrap_or("<unknown>");
+                let content = params
+                    .and_then(|p| p.get("file_content"))
+                    .and_then(|c| c.as_str())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing file_content parameter")))?;
+                
+                let missing_result = r_task(|| -> anyhow::Result<Vec<String>> {
+                    // Call R function to extract and check libraries
+                    let result = RFunction::from(".ps.check_missing_packages")
+                        .param("content", content)
+                        .call()?;
+                    // Convert harp::Error to anyhow::Error
+                    let vec: Vec<String> = result.try_into().map_err(|e: harp::Error| anyhow::anyhow!("Failed to convert result: {}", e))?;
+                    Ok(vec)
+                });
+                
+                let missing = match missing_result {
+                    Ok(vec) => {
+                        vec
+                    },
+                    Err(e) => {
+                        return Err(amalthea::Error::Anyhow(e));
+                    }
+                };
+                
+                serde_json::json!({
+                    "missing_packages": missing
+                })
+            },
+            
             "uninstall_package" => {
                 let package_name = params
                     .and_then(|p| p.get("package_name"))

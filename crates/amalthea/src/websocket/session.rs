@@ -35,6 +35,7 @@ use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
+use crate::wire::input_reply::InputReply;
 
 use super::server::ClientId;
 
@@ -50,6 +51,7 @@ pub async fn handle_session(
     control_handler: Arc<StdMutex<dyn ControlHandler>>,
     iopub_tx: Sender<IOPubMessage>,
     comm_manager_tx: Sender<CommManagerEvent>,
+    stdin_reply_tx: Sender<crate::Result<InputReply>>,
 ) -> Result<(), Error> {
     log::info!("WebSocket client connected");
 
@@ -60,7 +62,7 @@ pub async fn handle_session(
     while let Some(msg_result) = read_half.next().await {
         match msg_result {
             Ok(WsMessage::Text(text)) => {
-                if let Err(e) = handle_message(&text, &session, &shell_handler, &control_handler, &iopub_tx, &comm_manager_tx, &write_half, &open_comms).await {
+                if let Err(e) = handle_message(&text, &session, &shell_handler, &control_handler, &iopub_tx, &comm_manager_tx, &stdin_reply_tx, &write_half, &open_comms).await {
                     log::error!("Error handling message: {}", e);
                 }
             },
@@ -72,7 +74,9 @@ pub async fn handle_session(
                 log::error!("WebSocket error: {}", e);
                 break;
             },
-            _ => {},
+            _ => {
+                // Ignore other message types (Binary, Ping, Pong, Frame)
+            }
         }
     }
 
@@ -87,9 +91,10 @@ async fn handle_message(
     control_handler: &Arc<StdMutex<dyn ControlHandler>>,
     iopub_tx: &Sender<IOPubMessage>,
     comm_manager_tx: &Sender<CommManagerEvent>,
+    stdin_reply_tx: &Sender<crate::Result<InputReply>>,
     write_half: &Arc<TokioMutex<WsWriter>>,
     open_comms: &Arc<TokioMutex<HashMap<String, CommSocket>>>,
-) -> Result<(), Error> {
+)-> Result<(), Error> {
     let mut wire_msg: WireMessage = serde_json::from_str(text)
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to parse message: {}", e)))?;
     let msg_type = wire_msg.header.msg_type.as_str();
@@ -166,20 +171,65 @@ async fn handle_message(
         "complete_request" => {
             let req: JupyterMessage<crate::wire::complete_request::CompleteRequest> =
                 JupyterMessage::try_from(&wire_msg)?;
-            let reply = shell_handler.lock().await.handle_complete_request(&req.content).await?;
-            send_reply(&req, reply, session, write_half).await?;
+            
+            // Spawn in background to avoid blocking the receive loop when R is waiting for stdin
+            let shell_handler_clone = shell_handler.clone();
+            let session_clone = session.clone();
+            let write_half_clone = write_half.clone();
+            tokio::spawn(async move {
+                match shell_handler_clone.lock().await.handle_complete_request(&req.content).await {
+                    Ok(reply) => {
+                        if let Err(e) = send_reply(&req, reply, &session_clone, &write_half_clone).await {
+                            log::error!("complete_request: failed to send reply: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("complete_request: handler error: {}", e);
+                    }
+                }
+            });
         },
         "inspect_request" => {
             let req: JupyterMessage<crate::wire::inspect_request::InspectRequest> =
                 JupyterMessage::try_from(&wire_msg)?;
-            let reply = shell_handler.lock().await.handle_inspect_request(&req.content).await?;
-            send_reply(&req, reply, session, write_half).await?;
+            
+            // Spawn in background to avoid blocking the receive loop when R is waiting for stdin
+            let shell_handler_clone = shell_handler.clone();
+            let session_clone = session.clone();
+            let write_half_clone = write_half.clone();
+            tokio::spawn(async move {
+                match shell_handler_clone.lock().await.handle_inspect_request(&req.content).await {
+                    Ok(reply) => {
+                        if let Err(e) = send_reply(&req, reply, &session_clone, &write_half_clone).await {
+                            log::error!("inspect_request: failed to send reply: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("inspect_request: handler error: {}", e);
+                    }
+                }
+            });
         },
         "is_complete_request" => {
             let req: JupyterMessage<crate::wire::is_complete_request::IsCompleteRequest> =
                 JupyterMessage::try_from(&wire_msg)?;
-            let reply = shell_handler.lock().await.handle_is_complete_request(&req.content).await?;
-            send_reply(&req, reply, session, write_half).await?;
+            
+            // Spawn in background to avoid blocking when R is waiting for stdin
+            let shell_handler_clone = shell_handler.clone();
+            let session_clone = session.clone();
+            let write_half_clone = write_half.clone();
+            tokio::spawn(async move {
+                match shell_handler_clone.lock().await.handle_is_complete_request(&req.content).await {
+                    Ok(reply) => {
+                        if let Err(e) = send_reply(&req, reply, &session_clone, &write_half_clone).await {
+                            log::error!("is_complete_request: failed to send reply: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        log::error!("is_complete_request: handler error: {}", e);
+                    }
+                }
+            });
         },
         "history_request" => {
             // History is not currently implemented; return empty history
@@ -326,6 +376,15 @@ async fn handle_message(
             
             if let Some(Ok(reply)) = reply {
                 send_reply(&req, reply, session, write_half).await?;
+            }
+        },
+        "input_reply" => {
+            let reply: JupyterMessage<crate::wire::input_reply::InputReply> =
+                JupyterMessage::try_from(&wire_msg)?;
+            
+            // Forward the input reply back to R through the stdin_reply_tx channel
+            if let Err(e) = stdin_reply_tx.send(Ok(reply.content)) {
+                log::error!("Failed to forward input_reply to R: {}", e);
             }
         },
         _ => {
