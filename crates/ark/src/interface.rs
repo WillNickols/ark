@@ -39,6 +39,7 @@ use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::header::JupyterHeader;
 use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
@@ -693,7 +694,8 @@ impl RMain {
         // If the code is not to be executed silently, re-broadcast the
         // execution to all frontends
         if !req.silent {
-            if let Err(err) = self.iopub_tx.send(IOPubMessage::ExecuteInput(ExecuteInput {
+            let parent_header = Some(parent.header.clone());
+            if let Err(err) = self.iopub_tx.send(IOPubMessage::ExecuteInput(parent_header, ExecuteInput {
                 code: req.code.clone(),
                 execution_count: self.execution_count,
             })) {
@@ -1648,6 +1650,8 @@ impl RMain {
     fn reply_execute_request(&mut self, req: ActiveReadConsoleRequest, prompt_info: &PromptInfo) {
         let prompt = &prompt_info.input_prompt;
 
+        let originator_header = req.originator.header.clone();
+
         let (reply, result, error_occurred) = if prompt_info.incomplete {
             log::trace!("Got prompt {} signaling incomplete request", prompt);
             (new_incomplete_reply(&req.request, req.exec_count), None, false)
@@ -1658,12 +1662,12 @@ impl RMain {
 
             // Try to create an error reply first, if an error occurred
             log::info!("🎬 Creating execute reply for exec_count={}", req.exec_count);
-            if let Some((reply, result)) = self.make_execute_reply_error(req.exec_count) {
+            if let Some((reply, result)) = self.make_execute_reply_error(req.exec_count, &originator_header) {
                 log::info!("🎬 -> Error reply generated");
                 (reply, result, true)
             } else {
                 log::info!("🎬 -> Success reply, calling make_execute_reply");
-                let (reply, result) = self.make_execute_reply(req.exec_count);
+                let (reply, result) = self.make_execute_reply(req.exec_count, &originator_header);
                 log::info!("🎬 -> make_execute_reply returned, has_result={}", result.is_some());
                 (reply, result, false)
             }
@@ -1714,6 +1718,7 @@ impl RMain {
     fn make_execute_reply_error(
         &mut self,
         exec_count: u32,
+        parent: &JupyterHeader,
     ) -> Option<(amalthea::Result<ExecuteReply>, Option<IOPubMessage>)> {
         // Save and reset error occurred flag
         let error_occurred = self.error_occurred;
@@ -1769,7 +1774,7 @@ impl RMain {
         }
 
         let reply = new_execute_reply_error(exception.clone(), exec_count);
-        let result = IOPubMessage::ExecuteError(ExecuteError { exception });
+        let result = IOPubMessage::ExecuteError(Some(parent.clone()), ExecuteError { exception });
 
         Some((reply, Some(result)))
     }
@@ -1777,6 +1782,7 @@ impl RMain {
     fn make_execute_reply(
         &mut self,
         exec_count: u32,
+        parent: &JupyterHeader,
     ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -1834,7 +1840,7 @@ impl RMain {
         }
 
         let result = (data.len() > 0).then(|| {
-            IOPubMessage::ExecuteResult(ExecuteResult {
+            IOPubMessage::ExecuteResult(Some(parent.clone()), ExecuteResult {
                 execution_count: exec_count,
                 data: serde_json::Value::Object(data),
                 metadata: json!({}),
@@ -1991,7 +1997,12 @@ impl RMain {
         }
 
         // Stream output via the IOPub channel.
-        let message = IOPubMessage::Stream(StreamOutput {
+        let parent_header = r_main
+            .active_request
+            .as_ref()
+            .map(|req| req.originator.header.clone());
+
+        let message = IOPubMessage::Stream(parent_header, StreamOutput {
             name: stream,
             text: content,
         });

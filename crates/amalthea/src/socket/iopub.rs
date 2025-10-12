@@ -31,10 +31,10 @@ pub enum IOPubContextChannel {
 /// to the IOPub broadcaster for delivery to all connected clients.
 pub enum IOPubMessage {
     Status(JupyterHeader, IOPubContextChannel, KernelStatus),
-    ExecuteResult(ExecuteResult),
-    ExecuteError(ExecuteError),
-    ExecuteInput(ExecuteInput),
-    Stream(StreamOutput),
+    ExecuteResult(Option<JupyterHeader>, ExecuteResult),
+    ExecuteError(Option<JupyterHeader>, ExecuteError),
+    ExecuteInput(Option<JupyterHeader>, ExecuteInput),
+    Stream(Option<JupyterHeader>, StreamOutput),
     CommOpen(CommOpen),
     CommMsgReply(JupyterHeader, CommWireMsg),
     CommMsgEvent(CommWireMsg),

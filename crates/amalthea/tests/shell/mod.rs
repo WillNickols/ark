@@ -147,10 +147,13 @@ impl ShellHandler for Shell {
         // If the code is not to be executed silently, re-broadcast the
         // execution to all frontends
         if !req.silent {
-            if let Err(err) = self.iopub.send(IOPubMessage::ExecuteInput(ExecuteInput {
-                code: req.code.clone(),
-                execution_count: self.execution_count,
-            })) {
+            if let Err(err) = self
+                .iopub
+                .send(IOPubMessage::ExecuteInput(None, ExecuteInput {
+                    code: req.code.clone(),
+                    execution_count: self.execution_count,
+                }))
+            {
                 warn!(
                     "Could not broadcast execution input {} to all frontends: {}",
                     self.execution_count, err
@@ -172,9 +175,12 @@ impl ShellHandler for Shell {
                 ],
             };
 
-            if let Err(err) = self.iopub.send(IOPubMessage::ExecuteError(ExecuteError {
-                exception: exception.clone(),
-            })) {
+            if let Err(err) = self
+                .iopub
+                .send(IOPubMessage::ExecuteError(None, ExecuteError {
+                    exception: exception.clone(),
+                }))
+            {
                 warn!(
                     "Could not publish error from computation {} on iopub: {}",
                     self.execution_count, err
@@ -198,7 +204,7 @@ impl ShellHandler for Shell {
 
             // Echo the reply
             self.iopub
-                .send(IOPubMessage::Stream(StreamOutput {
+                .send(IOPubMessage::Stream(None, StreamOutput {
                     name: Stream::Stdout,
                     text: reply.unwrap().value,
                 }))
@@ -209,12 +215,15 @@ impl ShellHandler for Shell {
         // echoed back.
         let data = json!({"text/plain": req.code });
         self.iopub
-            .send(IOPubMessage::ExecuteResult(ExecuteResult {
-                execution_count: self.execution_count,
-                data,
-                metadata: json!({}),
-                transient: json!({}),
-            }))
+            .send(IOPubMessage::ExecuteResult(
+                None,
+                ExecuteResult {
+                    execution_count: self.execution_count,
+                    data,
+                    metadata: json!({}),
+                    transient: json!({}),
+                },
+            ))
             .unwrap();
 
         // Let the shell thread know that we've successfully executed the code.
