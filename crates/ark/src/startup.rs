@@ -94,7 +94,7 @@ fn source_r_profile(path: &PathBuf) {
     // https://jupyter-client.readthedocs.io/en/stable/messaging.html#parent-header
     let message = format!("Error while sourcing R profile file at path '{path}':\n{message}");
 
-    let message = IOPubMessage::Stream(StreamOutput {
+    let message = IOPubMessage::Stream(None, StreamOutput {
         name: Stream::Stderr,
         text: message,
     });

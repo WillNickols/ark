@@ -124,7 +124,7 @@ impl StreamCapture {
         };
 
         // Create and send the IOPub
-        let message = IOPubMessage::Stream(output);
+        let message = IOPubMessage::Stream(None, output);
         if let Err(e) = iopub_tx.send(message) {
             warn!("Error sending stream data to iopub: {}", e);
         }

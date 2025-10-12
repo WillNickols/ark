@@ -38,26 +38,26 @@ pub fn convert_iopub_to_json(msg: &IOPubMessage, session: &Session) -> Option<St
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
         },
-        IOPubMessage::ExecuteResult(result) => {
-            let jupyter_msg = JupyterMessage::create(result.clone(), None, session);
+        IOPubMessage::ExecuteResult(parent, result) => {
+            let jupyter_msg = JupyterMessage::create(result.clone(), parent.clone(), session);
             WireMessage::try_from(&jupyter_msg)
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
         },
-        IOPubMessage::ExecuteError(error) => {
-            let jupyter_msg = JupyterMessage::create(error.clone(), None, session);
+        IOPubMessage::ExecuteError(parent, error) => {
+            let jupyter_msg = JupyterMessage::create(error.clone(), parent.clone(), session);
             WireMessage::try_from(&jupyter_msg)
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
         },
-        IOPubMessage::ExecuteInput(input) => {
-            let jupyter_msg = JupyterMessage::create(input.clone(), None, session);
+        IOPubMessage::ExecuteInput(parent, input) => {
+            let jupyter_msg = JupyterMessage::create(input.clone(), parent.clone(), session);
             WireMessage::try_from(&jupyter_msg)
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
         },
-        IOPubMessage::Stream(stream) => {
-            let jupyter_msg = JupyterMessage::create(stream.clone(), None, session);
+        IOPubMessage::Stream(parent, stream) => {
+            let jupyter_msg = JupyterMessage::create(stream.clone(), parent.clone(), session);
             WireMessage::try_from(&jupyter_msg)
                 .ok()
                 .and_then(|wm| serde_json::to_string(&wm).ok())
@@ -136,26 +136,26 @@ pub async fn iopub_broadcaster(
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
                     },
-                    IOPubMessage::ExecuteResult(result) => {
-                        let jupyter_msg = JupyterMessage::create(result.clone(), None, &session);
+                    IOPubMessage::ExecuteResult(parent, result) => {
+                        let jupyter_msg = JupyterMessage::create(result.clone(), parent.clone(), &session);
                         WireMessage::try_from(&jupyter_msg)
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
                     },
-                    IOPubMessage::ExecuteError(error) => {
-                        let jupyter_msg = JupyterMessage::create(error.clone(), None, &session);
+                    IOPubMessage::ExecuteError(parent, error) => {
+                        let jupyter_msg = JupyterMessage::create(error.clone(), parent.clone(), &session);
                         WireMessage::try_from(&jupyter_msg)
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
                     },
-                    IOPubMessage::ExecuteInput(input) => {
-                        let jupyter_msg = JupyterMessage::create(input.clone(), None, &session);
+                    IOPubMessage::ExecuteInput(parent, input) => {
+                        let jupyter_msg = JupyterMessage::create(input.clone(), parent.clone(), &session);
                         WireMessage::try_from(&jupyter_msg)
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
                     },
-                    IOPubMessage::Stream(stream) => {
-                        let jupyter_msg = JupyterMessage::create(stream.clone(), None, &session);
+                    IOPubMessage::Stream(parent, stream) => {
+                        let jupyter_msg = JupyterMessage::create(stream.clone(), parent.clone(), &session);
                         WireMessage::try_from(&jupyter_msg)
                             .ok()
                             .and_then(|wm| serde_json::to_string(&wm).ok())
