@@ -1997,10 +1997,9 @@ impl RMain {
         }
 
         // Stream output via the IOPub channel.
-        let parent_header = r_main
-            .active_request
-            .as_ref()
-            .map(|req| req.originator.header.clone());
+        // Use the graphics_device parent_header storage instead of active_request,
+        // since active_request may be cleared before all stream output is sent
+        let parent_header = crate::plots::graphics_device::get_parent_header();
 
         let message = IOPubMessage::Stream(parent_header, StreamOutput {
             name: stream,

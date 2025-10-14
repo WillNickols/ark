@@ -804,6 +804,13 @@ pub(crate) fn set_parent_header(parent: Option<JupyterHeader>) {
     });
 }
 
+/// Get the current execute request's parent header
+pub(crate) fn get_parent_header() -> Option<JupyterHeader> {
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.parent_header.borrow().clone()
+    })
+}
+
 /// Hook applied after a code chunk has finished executing
 ///
 /// Not an official graphics device hook, instead we run this manually after
