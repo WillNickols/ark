@@ -929,61 +929,93 @@ impl PositronVariable {
         let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
-            EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
-                "<private>" => {
-                    let env = Environment::new(object);
-                    let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
-                    let private = RObject::new(enclos.find("private")?);
+            EnvironmentVariableNode::R6Node { object, name } => {
+                match name.as_str() {
+                    "<private>" => {
+                        let env = Environment::new(object);
+                        let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
+                        let private = RObject::new(enclos.find("private")?);
 
-                    Ok(Self::inspect_environment(private)?)
-                },
+                        let result = Self::inspect_environment(private)?;
+                        Ok(result)
+                    },
 
-                "<methods>" => Ok(Self::inspect_r6_methods(object)?),
+                    "<methods>" => {
+                        let result = Self::inspect_r6_methods(object)?;
+                        Ok(result)
+                    },
 
-                _ => Err(anyhow!("Unexpected path {:?}", path)),
+                    _ => {
+                        log::error!("[VARIABLES] Unexpected R6 path: {:?}", path);
+                        Err(anyhow!("Unexpected path {:?}", path))
+                    },
+                }
             },
 
             EnvironmentVariableNode::Concrete { object } => {
                 // First try to dispatch GetChildren method and construct
                 // variables from it.
                 match Self::try_inspect_custom_method(object.sexp) {
-                    Err(err) => log::error!(
-                        "Failed to inspect with {}: {err}",
-                        ArkGenerics::VariableGetChildren.to_string()
-                    ),
+                    Err(err) => {
+                        log::error!(
+                            "Failed to inspect with {}: {err}",
+                            ArkGenerics::VariableGetChildren.to_string()
+                        );
+                    },
                     Ok(None) => {},
-                    Ok(Some(variables)) => return Ok(variables),
+                    Ok(Some(variables)) => {
+                        return Ok(variables);
+                    },
                 }
 
                 if object.is_s4() {
-                    Ok(Self::inspect_s4(object.sexp)?)
+                    let result = Self::inspect_s4(object.sexp)?;
+                    Ok(result)
                 } else {
-                    match r_typeof(object.sexp) {
-                        VECSXP | EXPRSXP => Ok(Self::inspect_list(object.sexp)?),
-                        LISTSXP => Ok(Self::inspect_pairlist(object.sexp)?),
+                    let r_type = r_typeof(object.sexp);
+                    
+                    match r_type {
+                        VECSXP | EXPRSXP => {
+                            let result = Self::inspect_list(object.sexp)?;
+                            Ok(result)
+                        },
+                        LISTSXP => {
+                            let result = Self::inspect_pairlist(object.sexp)?;
+                            Ok(result)
+                        },
                         ENVSXP => {
                             if r_inherits(object.sexp, "R6") {
-                                Ok(Self::inspect_r6(object)?)
+                                let result = Self::inspect_r6(object)?;
+                                Ok(result)
                             } else {
-                                Ok(Self::inspect_environment(object)?)
+                                let result = Self::inspect_environment(object)?;
+                                Ok(result)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
                             if r_is_matrix(object.sexp) {
-                                Self::inspect_matrix(object.sexp)
+                                let result = Self::inspect_matrix(object.sexp)?;
+                                Ok(result)
                             } else {
-                                Ok(Self::inspect_vector(object.sexp)?)
+                                let result = Self::inspect_vector(object.sexp)?;
+                                Ok(result)
                             }
                         },
-                        _ => Ok(vec![]),
+                        _ => {
+                            log::warn!("[VARIABLES] Unhandled R type: {}, returning empty list", r_type);
+                            Ok(vec![])
+                        },
                     }
                 }
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
-                Ok(Self::inspect_matrix_column(object.sexp, index)?)
+                let result = Self::inspect_matrix_column(object.sexp, index)?;
+                Ok(result)
             },
-            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
+            EnvironmentVariableNode::AtomicVectorElement { .. } => {
+                Ok(vec![])
+            },
         }
     }
 
@@ -1071,6 +1103,8 @@ impl PositronVariable {
         object: RObject,
         access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
+        let r_type = r_typeof(object.sexp);
+        
         // Concrete nodes are objects that are treated as is. Accessing an element from them
         // might result in special node types.
 
@@ -1130,8 +1164,10 @@ impl PositronVariable {
             });
         }
 
-        match r_typeof(object.sexp) {
-            ENVSXP => Self::get_envsxp_child_node_at(object, access_key),
+        match r_type {
+            ENVSXP => {
+                Self::get_envsxp_child_node_at(object, access_key)
+            },
             VECSXP | EXPRSXP => {
                 let index = parse_index(access_key)?;
                 Ok(EnvironmentVariableNode::Concrete {
@@ -1161,9 +1197,12 @@ impl PositronVariable {
                     })
                 }
             },
-            _ => Err(harp::Error::Anyhow(anyhow!(
-                "Unexpected child at {access_key}"
-            ))),
+            _ => {
+                log::error!("[VARIABLES] Unexpected/unhandled R type: {}, access_key: '{}'", r_type, access_key);
+                Err(harp::Error::Anyhow(anyhow!(
+                    "Unexpected child at {access_key}"
+                )))
+            },
         }
     }
 
@@ -1172,7 +1211,7 @@ impl PositronVariable {
         path_elt: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
         match node {
-            EnvironmentVariableNode::Concrete { object } => {
+            EnvironmentVariableNode::Concrete { object} => {
                 Self::get_concrete_child_node(object, path_elt)
             },
 
@@ -1185,9 +1224,10 @@ impl PositronVariable {
 
                         // TODO: it seems unlikely that private would host active bindings
                         //       so find() is fine, we can assume this is concrete
-                        Ok(EnvironmentVariableNode::Concrete {
+                        let result = Ok(EnvironmentVariableNode::Concrete {
                             object: RObject::view(private.find(path_elt)?),
-                        })
+                        });
+                        result
                     },
 
                     _ => {
@@ -1225,8 +1265,8 @@ impl PositronVariable {
     ) -> harp::Result<EnvironmentVariableNode> {
         let mut node = EnvironmentVariableNode::Concrete { object };
 
-        for path_elt in path {
-            node = Self::get_child_node_at(node, path_elt)?
+        for (i, path_elt) in path.iter().enumerate() {
+            node = Self::get_child_node_at(node, path_elt)?;
         }
 
         Ok(node)

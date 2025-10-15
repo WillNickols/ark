@@ -119,31 +119,47 @@ impl CommSocket {
     {
         let (id, data) = match message {
             CommMsg::Rpc(id, data) => (id, data),
-            _ => return false,
+            _ => {
+                return false;
+            },
         };
 
+        // Extract JSON-RPC ID from request data
+        let jsonrpc_id = data.get("id").cloned().unwrap_or_else(|| serde_json::json!(null));
+        
         let json = match serde_json::from_value::<Reqs>(data.clone()) {
             Ok(m) => {
                 let _span =
                     tracing::trace_span!("comm handler", name = ?self.comm_name, request = ?m)
                         .entered();
                 match request_handler(m) {
-                    Ok(reply) => match serde_json::to_value(reply) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            let message = format!(
-                                        "Failed to serialise reply for {} request: {err} (request: {data:})",
-                                        self.comm_name
-                                    );
-                            log::trace!("{message}");
-                            json_rpc_error(JsonRpcErrorCode::InternalError, message)
-                        },
+                    Ok(reply) => {
+                        match serde_json::to_value(reply) {
+                            Ok(value) => {
+                                // Wrap in JSON-RPC response format with correct ID
+                                serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": jsonrpc_id,
+                                    "result": value
+                                })
+                            },
+                            Err(err) => {
+                                let message = format!(
+                                            "Failed to serialise reply for {} request: {err} (request: {data:})",
+                                            self.comm_name
+                                        );
+                                log::error!("{}", message);
+                                log::trace!("{message}");
+                                json_rpc_error(JsonRpcErrorCode::InternalError, message)
+                            },
+                        }
                     },
                     Err(err) => {
                         let message = format!(
                             "Failed to process {} request: {err} (request: {data:})",
                             self.comm_name
                         );
+                        log::error!("{}", message);
                         log::trace!("{message}");
                         json_rpc_error(JsonRpcErrorCode::InternalError, message)
                     },
@@ -154,12 +170,13 @@ impl CommSocket {
                     "No handler for {} request (method not found): {err:} (request: {data:})",
                     self.comm_name
                 );
+                log::error!("{}", message);
                 log::trace!("{message}");
                 json_rpc_error(JsonRpcErrorCode::MethodNotFound, message)
             },
         };
 
-        let response = CommMsg::Rpc(id, json);
+        let response = CommMsg::Rpc(id.clone(), json);
 
         self.outgoing_tx.send(response).unwrap();
         true

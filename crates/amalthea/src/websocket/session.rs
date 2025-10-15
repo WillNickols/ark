@@ -272,6 +272,17 @@ async fn handle_message(
                                             break;
                                         }
                                     },
+                                    CommMsg::Rpc(id, data) => {
+                                        log::info!("[COMM RELAY] Relaying RPC response for request {} on comm {}", id, comm_id);
+                                        let comm_msg = CommWireMsg {
+                                            comm_id: comm_id.clone(),
+                                            data,
+                                        };
+                                        if let Err(_e) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
+                                            log::error!("[COMM RELAY] Failed to send RPC response");
+                                            break;
+                                        }
+                                    },
                                     CommMsg::Close => {
                                         log::info!("[COMM RELAY] Received close for comm {}", comm_id);
                                         let comm_close = CommClose {
@@ -281,9 +292,6 @@ async fn handle_message(
                                             log::error!("[COMM RELAY] Failed to send comm close: {}", e);
                                         }
                                         break;
-                                    },
-                                    CommMsg::Rpc(_, _) => {
-                                        log::warn!("[COMM RELAY] Unexpected RPC message on outgoing channel for comm {}", comm_id);
                                     }
                                 }
                             },
@@ -300,27 +308,41 @@ async fn handle_message(
         "comm_msg" => {
             let req: JupyterMessage<CommWireMsg> = JupyterMessage::try_from(&wire_msg)?;
             
-            log::trace!("Processing comm_msg for comm_id: {}", req.content.comm_id);
+            log::info!("[WEBSOCKET SESSION] Processing comm_msg for comm_id: {}", req.content.comm_id);
             
-            // ALL comm messages now use JSON-RPC 2.0 and are handled synchronously
-            let result = shell_handler.lock().await.handle_comm_message(&req.content.comm_id, &req.content.data).await;
+            // Check if this method should be handled by the generic shell handler
+            // These methods are implemented in shell.rs handle_comm_message and should
+            // not be routed to specialized comm handlers even if the comm is registered
+            let method = req.content.data.get("method").and_then(|m| m.as_str()).unwrap_or("");
+            let shell_methods = [
+                "set_working_directory",
+                "list_packages",
+                "install_package",
+                "uninstall_package",
+                "check_missing_packages"
+            ];
+            let use_shell_handler = shell_methods.contains(&method);
             
-            match result {
-                Ok(reply_data) => {
-                    let reply_msg = crate::wire::comm_msg::CommWireMsg {
-                        comm_id: req.content.comm_id.clone(),
-                        data: reply_data,
-                    };
-                    send_reply(&req, reply_msg, session, write_half).await?;
-                },
-                Err(e) => {
-                    log::error!("Error handling comm message: {}", e);
+            // Check if this is a registered comm with its own handler
+            let comms = open_comms.lock().await;
+            let has_handler = comms.contains_key(&req.content.comm_id);
+            
+            if has_handler && !use_shell_handler {
+                log::info!("[WEBSOCKET SESSION] Found registered comm socket for comm_id: {}, routing message to comm handler", req.content.comm_id);
+                // Route message to the comm's handler via its incoming channel
+                let comm_socket = comms.get(&req.content.comm_id).unwrap();
+                let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+                let send_result = comm_socket.incoming_tx.send(msg);
+                drop(comms); // Release the lock
+                
+                if let Err(e) = send_result {
+                    log::error!("[WEBSOCKET SESSION] Failed to send message to comm handler: {}", e);
                     let error_data = serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": req.content.data.get("id"),
                         "error": {
                             "code": -32603,
-                            "message": format!("Internal error: {}", e)
+                            "message": format!("Comm handler not available: {}", e)
                         }
                     });
                     let reply_msg = crate::wire::comm_msg::CommWireMsg {
@@ -328,6 +350,44 @@ async fn handle_message(
                         data: error_data,
                     };
                     send_reply(&req, reply_msg, session, write_half).await?;
+                }
+                // Note: The comm handler will send its response via comm_socket.outgoing_tx,
+                // which is relayed to IOPub by the relay thread spawned in comm_open
+            } else {
+                if use_shell_handler {
+                    log::info!("[WEBSOCKET SESSION] Method '{}' handled by shell, routing to shell handler", method);
+                } else {
+                    log::info!("[WEBSOCKET SESSION] No registered comm handler for comm_id: {}, routing to shell handler", req.content.comm_id);
+                }
+                drop(comms); // Release the lock before calling shell handler
+                
+                // No registered handler, use the shell's generic handler
+                let result = shell_handler.lock().await.handle_comm_message(&req.content.comm_id, &req.content.data).await;
+                
+                match result {
+                    Ok(reply_data) => {
+                        let reply_msg = crate::wire::comm_msg::CommWireMsg {
+                            comm_id: req.content.comm_id.clone(),
+                            data: reply_data,
+                        };
+                        send_reply(&req, reply_msg, session, write_half).await?;
+                    },
+                    Err(e) => {
+                        log::error!("[WEBSOCKET SESSION] Error in shell handler: {}", e);
+                        let error_data = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": req.content.data.get("id"),
+                            "error": {
+                                "code": -32603,
+                                "message": format!("Internal error: {}", e)
+                            }
+                        });
+                        let reply_msg = crate::wire::comm_msg::CommWireMsg {
+                            comm_id: req.content.comm_id.clone(),
+                            data: error_data,
+                        };
+                        send_reply(&req, reply_msg, session, write_half).await?;
+                    }
                 }
             }
         },

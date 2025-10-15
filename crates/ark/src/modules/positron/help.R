@@ -520,16 +520,17 @@ help_package_topic <- function(help_page) {
 }
 
 # Initialize topics cache environment (exact port from Rao)
-if (!exists("topicsEnv", envir = .GlobalEnv)) {
-    assign("topicsEnv", new.env(parent = emptyenv()), envir = .GlobalEnv)
+# Use hidden variables (starting with .) to avoid cluttering the variables pane
+if (!exists(".topicsEnv", envir = .GlobalEnv)) {
+    assign(".topicsEnv", new.env(parent = emptyenv()), envir = .GlobalEnv)
 }
 
 # Initialize complete topics cache and last package list
-if (!exists("completeTopicsCache", envir = .GlobalEnv)) {
-    assign("completeTopicsCache", character(0), envir = .GlobalEnv)
+if (!exists(".completeTopicsCache", envir = .GlobalEnv)) {
+    assign(".completeTopicsCache", character(0), envir = .GlobalEnv)
 }
-if (!exists("lastPackageList", envir = .GlobalEnv)) {
-    assign("lastPackageList", character(0), envir = .GlobalEnv)
+if (!exists(".lastPackageList", envir = .GlobalEnv)) {
+    assign(".lastPackageList", character(0), envir = .GlobalEnv)
 }
 
 #' Escape special regex characters for safe pattern matching
@@ -676,8 +677,8 @@ if (!exists("lastPackageList", envir = .GlobalEnv)) {
     current_package_list <- .ps.getCurrentPackageList()
     
     # Check if package list has changed since last discovery
-    cached_flat <- get("completeTopicsCache", envir = .GlobalEnv)
-    last_package_list <- get("lastPackageList", envir = .GlobalEnv)
+    cached_flat <- get(".completeTopicsCache", envir = .GlobalEnv)
+    last_package_list <- get(".lastPackageList", envir = .GlobalEnv)
     
     # If we have cached topics and package list unchanged, use cached results
     if (length(cached_flat) > 0 && 
@@ -686,7 +687,7 @@ if (!exists("lastPackageList", envir = .GlobalEnv)) {
     }
     
     # Package list changed - need to rebuild cache
-    topics_env <- get("topicsEnv", envir = .GlobalEnv)
+    topics_env <- get(".topicsEnv", envir = .GlobalEnv)
     rm(list = ls(envir = topics_env), envir = topics_env)
     
     # Read topics from packages (with per-package caching)
@@ -713,8 +714,8 @@ if (!exists("lastPackageList", envir = .GlobalEnv)) {
     
     # Build flat list and cache it
     flat <- unlist(topics, use.names = FALSE)
-    assign("completeTopicsCache", flat, envir = .GlobalEnv)
-    assign("lastPackageList", current_package_list, envir = .GlobalEnv)
+    assign(".completeTopicsCache", flat, envir = .GlobalEnv)
+    assign(".lastPackageList", current_package_list, envir = .GlobalEnv)
     
     flat
 }

@@ -277,6 +277,7 @@ impl RVariables {
             },
             VariablesBackendRequest::Delete(params) => {
                 self.delete(params.names.clone())?;
+                self.update(None);
                 Ok(VariablesBackendReply::DeleteReply(params.names))
             },
             VariablesBackendRequest::Inspect(params) => {
@@ -333,7 +334,7 @@ impl RVariables {
     }
 
     /**
-     * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
+     * Delete specific variables. Uses rm(envir = <env>, list = <variables>)
      */
     fn delete(&mut self, variables: Vec<String>) -> Result<(), harp::error::Error> {
         r_task(|| {

@@ -285,7 +285,7 @@ impl ShellHandler for Shell {
         match target {
             Comm::Variables => {
                 log::info!("[COMM OPEN] Received comm open for Variables");
-                Ok(true)
+                handle_comm_open_variables(comm)
             },
             Comm::Ui => {
                 log::info!("[COMM OPEN] Received comm open for Ui");
@@ -301,8 +301,8 @@ impl ShellHandler for Shell {
                 result
             },
             Comm::Environment => {
-                log::info!("[COMM OPEN] Received comm open for Environment");
-                Ok(true)
+                log::info!("[COMM OPEN] Received comm open for Environment - using generic handler");
+                Ok(false)
             },
             _ => {
                 log::info!("[COMM OPEN] Received comm open for unknown target");
@@ -626,6 +626,25 @@ fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
         // emit help events, to be delivered over the help comm.
         RMain::with_mut(|main| main.set_help_fields(help_event_tx, r_port));
 
+        Ok(true)
+    })
+}
+
+fn handle_comm_open_variables(comm: CommSocket) -> amalthea::Result<bool> {
+    use crate::variables::r_variables::RVariables;
+    
+    r_task(|| {
+        // Get the global environment
+        let env = unsafe { harp::object::RObject::new(libr::R_GlobalEnv) };
+        
+        // Get the comm_manager_tx from RMain
+        let comm_manager_tx = RMain::get().get_comm_manager_tx().clone();
+        
+        // Start the variables handler
+        RVariables::start(env, comm, comm_manager_tx);
+        
+        log::info!("Started RVariables handler for global environment");
+        
         Ok(true)
     })
 }
