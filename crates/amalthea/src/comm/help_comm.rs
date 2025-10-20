@@ -118,7 +118,7 @@ pub enum HelpBackendRequest {
  * Backend RPC Reply types for the help comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "method", content = "result")]
+#[serde(untagged)]
 pub enum HelpBackendReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
