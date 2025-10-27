@@ -90,5 +90,27 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
 }
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
-    path.join("bin").join("x64")
+    // Check for R_BIN_ARCH environment variable (set by the extension)
+    // to determine the correct bin subdirectory
+    if let Ok(arch) = std::env::var("R_BIN_ARCH") {
+        let arch = arch.to_lowercase();
+        if arch == "arm64" || arch == "aarch64" {
+            // ARM64 R installations have DLLs in bin/ directly
+            return path.join("bin");
+        } else if arch == "x64" || arch == "x86_64" || arch == "amd64" {
+            // x64 R installations typically use bin/x64
+            return path.join("bin").join("x64");
+        }
+    }
+    
+    // If R_BIN_ARCH is not set, check if bin/x64/R.dll exists
+    // This handles both traditional x64 builds (with bin/x64) and
+    // ARM64 builds (with DLLs in bin/ directly)
+    let x64_path = path.join("bin").join("x64").join("R.dll");
+    if x64_path.exists() {
+        path.join("bin").join("x64")
+    } else {
+        // Fall back to bin/ directly for ARM64 or non-standard installations
+        path.join("bin")
+    }
 }
