@@ -169,7 +169,7 @@ dependencies = [
  "serde_urlencoded",
  "smallvec",
  "socket2",
- "time 0.3.36",
+ "time",
  "url",
 ]
 
@@ -251,7 +251,6 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "cfg-if",
- "chrono",
  "crossbeam",
  "crypto-common",
  "dirs",
@@ -272,6 +271,7 @@ dependencies = [
  "stdext",
  "strum 0.24.1",
  "strum_macros 0.24.3",
+ "time",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -308,7 +308,6 @@ dependencies = [
  "bytes",
  "cc",
  "cfg-if",
- "chrono",
  "crossbeam",
  "ctor",
  "dap",
@@ -342,6 +341,7 @@ dependencies = [
  "strum 0.26.2",
  "strum_macros 0.26.4",
  "tempfile",
+ "time",
  "tokio",
  "tower-lsp",
  "tracing",
@@ -524,12 +524,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e3c5919066adf22df73762e50cffcde3a758f2a848b113b586d1f86728b673b"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-integer",
  "num-traits",
  "serde",
- "time 0.1.45",
- "wasm-bindgen",
  "winapi",
 ]
 
@@ -558,7 +555,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e859cd57d0710d9e06c381b550c06e76992472a8c6d527aecd2fc673dcc231fb"
 dependencies = [
  "percent-encoding",
- "time 0.3.36",
+ "time",
  "version_check",
 ]
 
@@ -2585,7 +2582,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with_macros",
- "time 0.3.36",
+ "time",
 ]
 
 [[package]]
@@ -2890,17 +2887,6 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
-dependencies = [
- "libc",
- "wasi 0.10.0+wasi-snapshot-preview1",
- "winapi",
-]
-
-[[package]]
-name = "time"
 version = "0.3.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dfd88e563464686c916c7e46e623e520ddc6d79fa6641390f2e3fa86e83e885"
@@ -3116,7 +3102,7 @@ checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
 dependencies = [
  "crossbeam-channel",
  "thiserror",
- "time 0.3.36",
+ "time",
  "tracing-subscriber",
 ]
 
@@ -3358,12 +3344,6 @@ name = "wasi"
 version = "0.9.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cccddf32554fecc6acb585f82a32a72e28b48f8c4c1883ddfeeeaa96f7d8e519"
-
-[[package]]
-name = "wasi"
-version = "0.10.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "wasi"

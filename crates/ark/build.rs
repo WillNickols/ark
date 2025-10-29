@@ -7,6 +7,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 extern crate embed_resource;
 
 fn main() {
@@ -39,7 +40,9 @@ fn main() {
     println!("cargo:rustc-env=BUILD_GIT_BRANCH={}", git_branch);
 
     // Get the build date as a string
-    let build_date = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let build_date = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "<unknown>".to_string());
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
     // Embed an Application Manifest file on Windows.

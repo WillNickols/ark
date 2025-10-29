@@ -5,10 +5,10 @@
  *
  */
 
-use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 /// Represents the header of a Jupyter message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +40,14 @@ impl JupyterHeader {
             session,
             username,
             msg_type,
-            date: Utc::now().to_rfc3339(),
+            date: Self::now_timestamp(),
             version: String::from("5.3"),
         }
+    }
+
+    pub(crate) fn now_timestamp() -> String {
+        OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| "<unknown>".to_string())
     }
 }
