@@ -160,10 +160,28 @@
         fn_call <- expr[[1]]
         fn_call_name <- tryCatch(as.character(fn_call[[1]])[1], error = function(e) "")
         if (fn_call_name %in% c("::", ":::") && length(fn_call) >= 2) {
-            pkg <- tryCatch(as.character(fn_call[[2]])[1], error = function(e) NULL)
-            if (!is.null(pkg) && nchar(pkg) > 0) {
-                packages <- c(packages, pkg)
+            # Check if fn_call IS a :: call (fn_call[[1]] is the symbol ::)
+            # vs fn_call[[1]] is a CALL containing ::
+            if (!is.call(fn_call[[1]])) {
+                # fn_call is the :: call itself (e.g., scales::breaks_extended)
+                # Extract package from fn_call[[2]]
+                pkg <- tryCatch(as.character(fn_call[[2]])[1], error = function(e) NULL)
+                if (!is.null(pkg) && nchar(pkg) > 0) {
+                    packages <- c(packages, pkg)
+                }
+            } else {
+                # fn_call[[1]] is itself a :: call (e.g., in scales::breaks_extended(n))
+                # Extract package from fn_call[[1]][[2]]
+                pkg <- tryCatch(as.character(fn_call[[1]][[2]])[1], error = function(e) NULL)
+                if (!is.null(pkg) && nchar(pkg) > 0) {
+                    packages <- c(packages, pkg)
+                }
             }
+        }
+        # If fn_call is not a :: call (e.g., parentheses), recurse into it to find :: calls
+        # This handles cases like (scales::breaks_extended(n))(x)
+        else if (fn_call_name != "" && !fn_call_name %in% c("library", "require", "requireNamespace")) {
+            packages <- c(packages, .ps.extract_packages_from_expr(fn_call))
         }
     }
     
@@ -188,6 +206,14 @@
         for (i in 2:length(expr)) {
             if (is.call(expr[[i]])) {
                 packages <- c(packages, .ps.extract_packages_from_expr(expr[[i]]))
+            } else if (is.pairlist(expr[[i]])) {
+                # Handle function formals (default arguments)
+                # e.g., function(x, scale = scales::rescale)
+                for (j in seq_along(expr[[i]])) {
+                    if (is.call(expr[[i]][[j]])) {
+                        packages <- c(packages, .ps.extract_packages_from_expr(expr[[i]][[j]]))
+                    }
+                }
             }
         }
     }
