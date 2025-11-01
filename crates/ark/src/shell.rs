@@ -333,17 +333,17 @@ impl ShellHandler for Shell {
                     
                     let mut packages = Vec::new();
                     for i in 1..=nrows {
-                        let name: String = RFunction::from("[")
-                            .param("x", df.clone())
-                            .param("i", i)
-                            .param("j", "Package")
+                        let name: String = RFunction::from("[[")
+                            .add(df.clone())
+                            .add(i)
+                            .add("Package")
                             .call()
                             .and_then(|x| x.try_into())?;
                         
-                        let version: String = RFunction::from("[")
-                            .param("x", df.clone())
-                            .param("i", i)
-                            .param("j", "Version")
+                        let version: String = RFunction::from("[[")
+                            .add(df.clone())
+                            .add(i)
+                            .add("Version")
                             .call()
                             .and_then(|x| x.try_into())?;
                         
@@ -465,6 +465,20 @@ impl ShellHandler for Shell {
                         .call()?;
                     Ok(serde_json::Value::try_from(result)?)
                 }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to set working directory: {}", e)))?
+            },
+            
+            "set_console_width" => {
+                let width = params
+                    .and_then(|p| p.get("width"))
+                    .and_then(|w| w.as_i64())
+                    .ok_or_else(|| amalthea::Error::Anyhow(anyhow::anyhow!("Missing width parameter")))?;
+                
+                r_task(|| -> anyhow::Result<serde_json::Value> {
+                    let old_width = RFunction::from(".ps.rpc.setConsoleWidth")
+                        .add(width as i32)
+                        .call()?;
+                    Ok(serde_json::Value::try_from(old_width)?)
+                }).map_err(|e| amalthea::Error::Anyhow(anyhow::anyhow!("Failed to set console width: {}", e)))?
             },
             
             "show_help_topic" => {
