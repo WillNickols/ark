@@ -69,9 +69,7 @@ pub fn connect_websocket(
     }
 
     let session = Session::create("")?;
-
-    CommManager::start(iopub_tx.clone(), comm_manager_rx);
-
+        
     if stream_behavior == StreamBehavior::Capture {
         let iopub_tx_clone = iopub_tx.clone();
         spawn!(format!("{name}-output-capture"), move || {
@@ -84,6 +82,9 @@ pub fn connect_websocket(
         .build()
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to create Tokio runtime: {}", e)))?;
 
+    // Note: comm_manager_tx is not used here; it's already consumed by CommManager::start above
+    drop(comm_manager_tx);
+    
     spawn!(format!("{name}-websocket-server"), move || {
         rt.block_on(async move {
             let server = crate::websocket::server::WebSocketServer::new(port);
@@ -95,7 +96,7 @@ pub fn connect_websocket(
                     control_handler,
                     iopub_tx,
                     iopub_rx,
-                    comm_manager_tx,
+                    comm_manager_rx,
                     stdin_request_rx,
                     stdin_reply_tx,
                 )

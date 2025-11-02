@@ -125,10 +125,13 @@ impl UiComm {
             return false;
         }
 
-        if self
+        let handled = self
             .comm
-            .handle_request(message.clone(), |req| self.handle_backend_method(req))
-        {
+            .handle_request(message.clone(), |req| {
+                self.handle_backend_method(req)
+            });
+
+        if handled {
             return true;
         }
 

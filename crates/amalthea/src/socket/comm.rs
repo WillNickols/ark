@@ -119,9 +119,7 @@ impl CommSocket {
     {
         let (id, data) = match message {
             CommMsg::Rpc(id, data) => (id, data),
-            _ => {
-                return false;
-            },
+            _ => return false,
         };
 
         // Extract JSON-RPC ID from request data
@@ -176,8 +174,7 @@ impl CommSocket {
             },
         };
 
-        let response = CommMsg::Rpc(id.clone(), json);
-
+        let response = CommMsg::Rpc(id.clone(), json.clone());
         self.outgoing_tx.send(response).unwrap();
         true
     }

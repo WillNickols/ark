@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::fs::OpenOptions;
-use std::io::Write;
 
 use anyhow;
 use crossbeam::channel::Receiver;
@@ -50,19 +48,25 @@ pub async fn handle_session(
     shell_handler: Arc<TokioMutex<Box<dyn ShellHandler>>>,
     control_handler: Arc<StdMutex<dyn ControlHandler>>,
     iopub_tx: Sender<IOPubMessage>,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    backend_comms: super::server::BackendComms,
     stdin_reply_tx: Sender<crate::Result<InputReply>>,
 ) -> Result<(), Error> {
     log::info!("WebSocket client connected");
 
-    // Track opened comm channels for routing messages
+    // Track frontend-initiated comm channels for routing messages
     let open_comms: Arc<TokioMutex<HashMap<String, CommSocket>>> = Arc::new(TokioMutex::new(HashMap::new()));
+    
+    // Track pending RPC requests so relay threads can match responses and send with parent headers
+    let pending_rpcs: Arc<TokioMutex<HashMap<String, (JupyterMessage<CommWireMsg>, Arc<TokioMutex<WsWriter>>)>>> = Arc::new(TokioMutex::new(HashMap::new()));
+    
+    // Track which backend comms already have relay threads spawned (to avoid duplicates)
+    let backend_relays_spawned: Arc<TokioMutex<std::collections::HashSet<String>>> = Arc::new(TokioMutex::new(std::collections::HashSet::new()));
 
     // Read loop - no mutex needed, we own the read half
     while let Some(msg_result) = read_half.next().await {
         match msg_result {
             Ok(WsMessage::Text(text)) => {
-                if let Err(e) = handle_message(&text, &session, &shell_handler, &control_handler, &iopub_tx, &comm_manager_tx, &stdin_reply_tx, &write_half, &open_comms).await {
+                if let Err(e) = handle_message(&text, &session, &shell_handler, &control_handler, &iopub_tx, &backend_comms, &stdin_reply_tx, &write_half, &open_comms, &pending_rpcs, &backend_relays_spawned).await {
                     log::error!("Error handling message: {}", e);
                 }
             },
@@ -90,10 +94,12 @@ async fn handle_message(
     shell_handler: &Arc<TokioMutex<Box<dyn ShellHandler>>>,
     control_handler: &Arc<StdMutex<dyn ControlHandler>>,
     iopub_tx: &Sender<IOPubMessage>,
-    comm_manager_tx: &Sender<CommManagerEvent>,
+    backend_comms: &super::server::BackendComms,
     stdin_reply_tx: &Sender<crate::Result<InputReply>>,
     write_half: &Arc<TokioMutex<WsWriter>>,
     open_comms: &Arc<TokioMutex<HashMap<String, CommSocket>>>,
+    pending_rpcs: &Arc<TokioMutex<HashMap<String, (JupyterMessage<CommWireMsg>, Arc<TokioMutex<WsWriter>>)>>>,
+    backend_relays_spawned: &Arc<TokioMutex<std::collections::HashSet<String>>>,
 )-> Result<(), Error> {
     let mut wire_msg: WireMessage = serde_json::from_str(text)
         .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to parse message: {}", e)))?;
@@ -247,16 +253,11 @@ async fn handle_message(
                 // Store the comm socket for routing future messages
                 open_comms.lock().await.insert(req.content.comm_id.clone(), comm_socket.clone());
                 
-                comm_manager_tx.send(CommManagerEvent::Opened(comm_socket.clone(), req.content.data.clone()))
-                    .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to send comm open: {}", e)))?;
-                
-                // Spawn relay task to forward outgoing messages to IOPub
-                // This is the equivalent of Python's monkey-patching of comm.send()
-                // IMPORTANT: Must use std::thread::spawn, not tokio::spawn, because
-                // outgoing_rx.recv() is a blocking crossbeam channel operation
                 let comm_id = req.content.comm_id.clone();
                 let outgoing_rx = comm_socket.outgoing_rx.clone();
                 let iopub_tx_clone = iopub_tx.clone();
+                let pending_rpcs_clone = pending_rpcs.clone();
+                let session_clone = session.clone();
                 
                 std::thread::spawn(move || {
                     loop {
@@ -268,47 +269,56 @@ async fn handle_message(
                                             comm_id: comm_id.clone(),
                                             data,
                                         };
-                                        if let Err(_e) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
+                                        if let Err(_) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
                                             break;
                                         }
                                     },
-                                    CommMsg::Rpc(id, data) => {
-                                        log::info!("[COMM RELAY] Relaying RPC response for request {} on comm {}", id, comm_id);
-                                        let comm_msg = CommWireMsg {
-                                            comm_id: comm_id.clone(),
-                                            data,
-                                        };
-                                        if let Err(_e) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
-                                            log::error!("[COMM RELAY] Failed to send RPC response");
-                                            break;
+                                    CommMsg::Rpc(msg_id, data) => {
+                                        // Check if this is a response to a pending RPC request
+                                        let rt = tokio::runtime::Runtime::new().unwrap();
+                                        let pending = rt.block_on(async {
+                                            pending_rpcs_clone.lock().await.remove(&msg_id)
+                                        });
+                                        
+                                        if let Some((req, write)) = pending {
+                                            // Send RPC response with proper parent header
+                                            let reply_msg = CommWireMsg {
+                                                comm_id: comm_id.clone(),
+                                                data,
+                                            };
+                                            rt.block_on(async {
+                                                let _ = send_reply(&req, reply_msg, &session_clone, &write).await;
+                                            });
+                                        } else {
+                                            // No pending request, just broadcast (shouldn't happen for UI comm)
+                                            let comm_msg = CommWireMsg {
+                                                comm_id: comm_id.clone(),
+                                                data,
+                                            };
+                                            if let Err(_) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
+                                                break;
+                                            }
                                         }
                                     },
                                     CommMsg::Close => {
-                                        log::info!("[COMM RELAY] Received close for comm {}", comm_id);
                                         let comm_close = CommClose {
                                             comm_id: comm_id.clone(),
                                         };
-                                        if let Err(e) = iopub_tx_clone.send(IOPubMessage::CommClose(comm_close)) {
-                                            log::error!("[COMM RELAY] Failed to send comm close: {}", e);
-                                        }
+                                        let _ = iopub_tx_clone.send(IOPubMessage::CommClose(comm_close));
                                         break;
                                     }
                                 }
                             },
-                            Err(e) => {
-                                log::info!("[COMM RELAY] Channel closed for comm {}: {}", comm_id, e);
+                            Err(_) => {
                                 break;
                             }
                         }
                     }
-                    log::info!("[COMM RELAY] Relay thread ended for comm {}", comm_id);
                 });
             }
         },
         "comm_msg" => {
             let req: JupyterMessage<CommWireMsg> = JupyterMessage::try_from(&wire_msg)?;
-            
-            log::info!("[WEBSOCKET SESSION] Processing comm_msg for comm_id: {}", req.content.comm_id);
             
             // Check if this method should be handled by the generic shell handler
             // These methods are implemented in shell.rs handle_comm_message and should
@@ -316,6 +326,7 @@ async fn handle_message(
             let method = req.content.data.get("method").and_then(|m| m.as_str()).unwrap_or("");
             let shell_methods = [
                 "set_working_directory",
+                "set_console_width",
                 "list_packages",
                 "install_package",
                 "uninstall_package",
@@ -324,11 +335,14 @@ async fn handle_message(
             let use_shell_handler = shell_methods.contains(&method);
             
             // Check if this is a registered comm with its own handler
+            // First check frontend-initiated comms, then backend-initiated comms
             let comms = open_comms.lock().await;
-            let has_handler = comms.contains_key(&req.content.comm_id);
+            let has_frontend_handler = comms.contains_key(&req.content.comm_id);
             
-            if has_handler && !use_shell_handler {
-                log::info!("[WEBSOCKET SESSION] Found registered comm socket for comm_id: {}, routing message to comm handler", req.content.comm_id);
+            if has_frontend_handler && !use_shell_handler {
+                // Add this request to pending_rpcs so the relay thread can match the response
+                pending_rpcs.lock().await.insert(req.header.msg_id.clone(), (req.clone(), write_half.clone()));
+                
                 // Route message to the comm's handler via its incoming channel
                 let comm_socket = comms.get(&req.content.comm_id).unwrap();
                 let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
@@ -336,7 +350,9 @@ async fn handle_message(
                 drop(comms); // Release the lock
                 
                 if let Err(e) = send_result {
-                    log::error!("[WEBSOCKET SESSION] Failed to send message to comm handler: {}", e);
+                    // Remove from pending since we won't get a response
+                    pending_rpcs.lock().await.remove(&req.header.msg_id);
+                    
                     let error_data = serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": req.content.data.get("id"),
@@ -351,35 +367,106 @@ async fn handle_message(
                     };
                     send_reply(&req, reply_msg, session, write_half).await?;
                 }
-                // Note: The comm handler will send its response via comm_socket.outgoing_tx,
-                // which is relayed to IOPub by the relay thread spawned in comm_open
             } else {
-                if use_shell_handler {
-                    log::info!("[WEBSOCKET SESSION] Method '{}' handled by shell, routing to shell handler", method);
-                } else {
-                    log::info!("[WEBSOCKET SESSION] No registered comm handler for comm_id: {}, routing to shell handler", req.content.comm_id);
-                }
-                drop(comms); // Release the lock before calling shell handler
+                drop(comms); // Release frontend comms lock
                 
-                // No registered handler, use the shell's generic handler
-                let result = shell_handler.lock().await.handle_comm_message(&req.content.comm_id, &req.content.data).await;
+                // Check backend-initiated comms
+                let backend_comms_guard = backend_comms.lock().await;
+                let has_backend_handler = backend_comms_guard.contains_key(&req.content.comm_id);
                 
-                match result {
-                    Ok(reply_data) => {
-                        let reply_msg = crate::wire::comm_msg::CommWireMsg {
-                            comm_id: req.content.comm_id.clone(),
-                            data: reply_data,
-                        };
-                        send_reply(&req, reply_msg, session, write_half).await?;
-                    },
-                    Err(e) => {
-                        log::error!("[WEBSOCKET SESSION] Error in shell handler: {}", e);
+                if has_backend_handler && !use_shell_handler {
+                    let comm_socket = backend_comms_guard.get(&req.content.comm_id).unwrap().clone();
+                    let comm_id = req.content.comm_id.clone();
+                    drop(backend_comms_guard); // Release the lock early
+                    
+                    // Spawn relay thread for this backend comm if not already spawned
+                    // This ensures RPC responses use send_reply with proper parent_header
+                    let mut relays = backend_relays_spawned.lock().await;
+                    if !relays.contains(&comm_id) {
+                        relays.insert(comm_id.clone());
+                        drop(relays);
+                        
+                        let outgoing_rx = comm_socket.outgoing_rx.clone();
+                        let iopub_tx_clone = iopub_tx.clone();
+                        let pending_rpcs_clone = pending_rpcs.clone();
+                        let session_clone = session.clone();
+                        
+                        std::thread::spawn(move || {
+                            loop {
+                                match outgoing_rx.recv() {
+                                    Ok(msg) => {
+                                        match msg {
+                                            CommMsg::Data(data) => {
+                                                let comm_msg = CommWireMsg {
+                                                    comm_id: comm_id.clone(),
+                                                    data,
+                                                };
+                                                if let Err(_) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
+                                                    break;
+                                                }
+                                            },
+                                            CommMsg::Rpc(msg_id, data) => {
+                                                // Check if this is a response to a pending RPC request
+                                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                                let pending = rt.block_on(async {
+                                                    pending_rpcs_clone.lock().await.remove(&msg_id)
+                                                });
+                                                
+                                                if let Some((req, write)) = pending {
+                                                    // Send RPC response with proper parent header
+                                                    let reply_msg = CommWireMsg {
+                                                        comm_id: comm_id.clone(),
+                                                        data,
+                                                    };
+                                                    rt.block_on(async {
+                                                        let _ = send_reply(&req, reply_msg, &session_clone, &write).await;
+                                                    });
+                                                } else {
+                                                    // No pending request, just broadcast
+                                                    let comm_msg = CommWireMsg {
+                                                        comm_id: comm_id.clone(),
+                                                        data,
+                                                    };
+                                                    if let Err(_) = iopub_tx_clone.send(IOPubMessage::CommMsgEvent(comm_msg)) {
+                                                        break;
+                                                    }
+                                                }
+                                            },
+                                            CommMsg::Close => {
+                                                let comm_close = CommClose {
+                                                    comm_id: comm_id.clone(),
+                                                };
+                                                let _ = iopub_tx_clone.send(IOPubMessage::CommClose(comm_close));
+                                                break;
+                                            }
+                                        }
+                                    },
+                                    Err(_) => {
+                                        break;
+                                    }
+                                }
+                            }
+                        });
+                    } else {
+                        drop(relays);
+                    }
+                    
+                    // Add this request to pending_rpcs so the relay thread can match the response
+                    pending_rpcs.lock().await.insert(req.header.msg_id.clone(), (req.clone(), write_half.clone()));
+                    
+                    let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+                    let send_result = comm_socket.incoming_tx.send(msg);
+                    
+                    if let Err(e) = send_result {
+                        // Remove from pending since we won't get a response
+                        pending_rpcs.lock().await.remove(&req.header.msg_id);
+                        
                         let error_data = serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": req.content.data.get("id"),
                             "error": {
                                 "code": -32603,
-                                "message": format!("Internal error: {}", e)
+                                "message": format!("Backend comm handler not available: {}", e)
                             }
                         });
                         let reply_msg = crate::wire::comm_msg::CommWireMsg {
@@ -387,6 +474,37 @@ async fn handle_message(
                             data: error_data,
                         };
                         send_reply(&req, reply_msg, session, write_half).await?;
+                    }
+                } else {
+                    drop(backend_comms_guard); // Release the lock before calling shell handler
+                    
+                    // No registered handler, use the shell's generic handler
+                    let result = shell_handler.lock().await.handle_comm_message(&req.content.comm_id, &req.content.data).await;
+                    
+                    match result {
+                        Ok(reply_data) => {
+                            let reply_msg = crate::wire::comm_msg::CommWireMsg {
+                                comm_id: req.content.comm_id.clone(),
+                                data: reply_data,
+                            };
+                            send_reply(&req, reply_msg, session, write_half).await?;
+                        },
+                        Err(e) => {
+                            log::error!("[WEBSOCKET SESSION] Error in shell handler: {}", e);
+                            let error_data = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": req.content.data.get("id"),
+                                "error": {
+                                    "code": -32603,
+                                    "message": format!("Internal error: {}", e)
+                                }
+                            });
+                            let reply_msg = crate::wire::comm_msg::CommWireMsg {
+                                comm_id: req.content.comm_id.clone(),
+                                data: error_data,
+                            };
+                            send_reply(&req, reply_msg, session, write_half).await?;
+                        }
                     }
                 }
             }
@@ -400,9 +518,6 @@ async fn handle_message(
                 log::trace!("Closing comm {}", req.content.comm_id);
                 let _ = comm_socket.incoming_tx.send(CommMsg::Close);
             }
-            
-            comm_manager_tx.send(CommManagerEvent::Closed(req.content.comm_id.clone()))
-                .map_err(|e| Error::Anyhow(anyhow::anyhow!("Failed to send comm close: {}", e)))?;
         },
         "interrupt_request" => {
             let req: JupyterMessage<crate::wire::interrupt_request::InterruptRequest> =

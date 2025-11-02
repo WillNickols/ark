@@ -35,7 +35,7 @@ pub enum IOPubMessage {
     ExecuteError(Option<JupyterHeader>, ExecuteError),
     ExecuteInput(Option<JupyterHeader>, ExecuteInput),
     Stream(Option<JupyterHeader>, StreamOutput),
-    CommOpen(CommOpen),
+    CommOpen(Option<JupyterHeader>, CommOpen),
     CommMsgReply(JupyterHeader, CommWireMsg),
     CommMsgEvent(CommWireMsg),
     CommClose(CommClose),

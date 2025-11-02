@@ -369,6 +369,16 @@ impl ShellHandler for Shell {
                     RFunction::from("install.packages")
                         .param("pkgs", package_name)
                         .call()?;
+                    
+                    let is_installed: String = RFunction::from("system.file")
+                        .param("package", package_name)
+                        .call()
+                        .and_then(|x| x.try_into())?;
+                    
+                    if is_installed.is_empty() {
+                        anyhow::bail!("Package '{}' is not available for this version of R", package_name);
+                    }
+                    
                     Ok(())
                 });
                 
@@ -379,7 +389,7 @@ impl ShellHandler for Shell {
                     }),
                     Err(e) => serde_json::json!({
                         "success": false,
-                        "error": format!("Failed to install package {}: {}", package_name, e)
+                        "error": format!("{}", e)
                     })
                 }
             },

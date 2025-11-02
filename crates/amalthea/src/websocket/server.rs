@@ -26,6 +26,7 @@ use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
+use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::stdin::StdInRequest;
 use crate::wire::input_reply::InputReply;
@@ -34,9 +35,13 @@ pub type WsConnection = WebSocketStream<TcpStream>;
 pub type WsWriter = SplitSink<WsConnection, WsMessage>;
 pub type ClientId = usize;
 
+// Shared map of backend-initiated comms that all websocket sessions can access
+pub type BackendComms = Arc<TokioMutex<HashMap<String, CommSocket>>>;
+
 pub struct WebSocketServer {
     port: u16,
     clients: Arc<TokioMutex<Vec<Arc<TokioMutex<WsWriter>>>>>,
+    backend_comms: BackendComms,
 }
 
 impl WebSocketServer {
@@ -44,6 +49,7 @@ impl WebSocketServer {
         Self {
             port,
             clients: Arc::new(TokioMutex::new(Vec::new())),
+            backend_comms: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
 
@@ -54,7 +60,7 @@ impl WebSocketServer {
         control_handler: Arc<StdMutex<dyn ControlHandler>>,
         iopub_tx: Sender<IOPubMessage>,
         mut iopub_rx: Receiver<IOPubMessage>,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_manager_rx: Receiver<CommManagerEvent>,
         stdin_request_rx: Receiver<StdInRequest>,
         stdin_reply_tx: Sender<crate::Result<InputReply>>,
     ) -> Result<(), Error> {
@@ -66,13 +72,41 @@ impl WebSocketServer {
         log::info!("WebSocket server listening on {}", addr);
 
         let clients = self.clients.clone();
+        let backend_comms = self.backend_comms.clone();
         let shell_handler_arc = Arc::new(TokioMutex::new(shell_handler));
+
+        // Comm Manager listener - registers backend-initiated comms
+        let backend_comms_for_manager = backend_comms.clone();
+        std::thread::spawn(move || {
+            while let Ok(event) = comm_manager_rx.recv() {
+                match event {
+                    CommManagerEvent::Opened(socket, _data) => {
+                        let backend_comms_clone = backend_comms_for_manager.clone();
+                        let comm_id = socket.comm_id.clone();
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        rt.block_on(async move {
+                            backend_comms_clone.lock().await.insert(comm_id, socket);
+                        });
+                    },
+                    CommManagerEvent::Closed(comm_id) => {
+                        let backend_comms_clone = backend_comms_for_manager.clone();
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        rt.block_on(async move {
+                            backend_comms_clone.lock().await.remove(&comm_id);
+                        });
+                    },
+                    // Ignore other events - they're handled elsewhere or not needed for WebSocket mode
+                    CommManagerEvent::Message(_, _) => {},
+                    CommManagerEvent::PendingRpc(_) => {},
+                    CommManagerEvent::Request(_) => {},
+                }
+            }
+        });
 
         // IOPub broadcaster - runs in blocking thread and broadcasts to all clients
         let iopub_clients = clients.clone();
         let iopub_session = session.clone();
         std::thread::spawn(move || {
-            log::debug!("IOPub broadcaster thread started");
             let rt = tokio::runtime::Runtime::new().unwrap();
             while let Ok(msg) = iopub_rx.recv() {
                 if let Some(json) = crate::websocket::iopub::convert_iopub_to_json(&msg, &iopub_session) {
@@ -84,8 +118,7 @@ impl WebSocketServer {
                         
                         for (i, client_ws) in clients_guard.iter().enumerate() {
                             let mut ws = client_ws.lock().await;
-                            if let Err(e) = ws.send(WsMessage::Text(json_clone.clone())).await {
-                                log::error!("Failed to send IOPub message to client {}: {}", i, e);
+                            if let Err(_) = ws.send(WsMessage::Text(json_clone.clone())).await {
                                 disconnected.push(i);
                             }
                         }
@@ -93,12 +126,10 @@ impl WebSocketServer {
                         // Remove disconnected clients (in reverse order to preserve indices)
                         for &i in disconnected.iter().rev() {
                             clients_guard.remove(i);
-                            log::debug!("Removed disconnected client {}", i);
                         }
                     });
                 }
             }
-            log::debug!("IOPub broadcaster thread ended");
         });
 
         // StdIn broadcaster - runs in blocking thread and broadcasts input requests to all clients
@@ -116,8 +147,7 @@ impl WebSocketServer {
                         
                         for (i, client_ws) in clients_guard.iter().enumerate() {
                             let mut ws = client_ws.lock().await;
-                            if let Err(e) = ws.send(WsMessage::Text(json_clone.clone())).await {
-                                log::error!("Failed to send stdin message to client {}: {}", i, e);
+                            if let Err(_) = ws.send(WsMessage::Text(json_clone.clone())).await {
                                 disconnected.push(i);
                             }
                         }
@@ -148,7 +178,7 @@ impl WebSocketServer {
                     let shell_handler_clone = shell_handler_arc.clone();
                     let control_handler_clone = control_handler.clone();
                     let iopub_tx_clone = iopub_tx.clone();
-                    let comm_manager_tx_clone = comm_manager_tx.clone();
+                    let backend_comms_clone = backend_comms.clone();
                     let stdin_reply_tx_clone = stdin_reply_tx.clone();
                     let clients_clone = clients.clone();
                     let write_arc_for_removal = write_arc.clone();
@@ -161,7 +191,7 @@ impl WebSocketServer {
                             shell_handler_clone,
                             control_handler_clone,
                             iopub_tx_clone,
-                            comm_manager_tx_clone,
+                            backend_comms_clone,
                             stdin_reply_tx_clone,
                         )
                         .await
@@ -173,7 +203,6 @@ impl WebSocketServer {
                         let mut clients_guard = clients_clone.lock().await;
                         if let Some(pos) = clients_guard.iter().position(|c| Arc::ptr_eq(c, &write_arc_for_removal)) {
                             clients_guard.remove(pos);
-                            log::info!("Client removed from clients list");
                         }
                     });
                 },
