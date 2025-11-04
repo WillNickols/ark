@@ -361,10 +361,10 @@ impl DeviceContext {
                 },
             };
 
-            match &message {
+            match message {
                 CommMsg::Rpc(_, _) => {
                     log::trace!("Handling `RPC` for plot `id` {id}");
-                    socket.handle_request(message.clone(), |req| self.handle_rpc(req, id));
+                    socket.handle_request(message, |req| self.handle_rpc(req, id));
                 },
 
                 // Note that ideally this handler should be invoked before we
@@ -398,6 +398,8 @@ impl DeviceContext {
                 Ok(PlotBackendReply::GetIntrinsicSizeReply(None))
             },
             PlotBackendRequest::Render(plot_meta) => {
+                log::trace!("PlotBackendRequest::Render");
+
                 let size = unwrap!(plot_meta.size, None => {
                     return Err(anyhow!("Intrinsically sized plots are not yet supported."));
                 });
@@ -410,7 +412,7 @@ impl DeviceContext {
                     pixel_ratio: plot_meta.pixel_ratio,
                     format: plot_meta.format,
                 };
-                
+
                 let data = self.render_plot(&id, &settings)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
@@ -497,6 +499,8 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_new_plot_positron(&self, id: &PlotId) {
+        log::trace!("Notifying Positron of new plot");
+
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -525,21 +529,10 @@ impl DeviceContext {
             },
         };
 
-        // Send comm_open message directly to IOPub for WebSocket mode
-        let comm_open = amalthea::wire::comm_open::CommOpen {
-            comm_id: id.to_string(),
-            target_name: POSITRON_PLOT_CHANNEL_ID.to_string(),
-            data: data.clone(),
-        };
-        
-        // Include parent header so frontend can attribute the plot to the correct source
-        let parent = self.parent_header.borrow().clone();
-        if let Err(error) = self.iopub_tx.send(IOPubMessage::CommOpen(parent, comm_open)) {
-            log::error!("Failed to send CommOpen to IOPub: {error:?}");
-        }
-
         let event = CommManagerEvent::Opened(socket.clone(), data);
-        let _ = self.comm_manager_tx.send(event);
+        if let Err(error) = self.comm_manager_tx.send(event) {
+            log::error!("{error:?}");
+        }
 
         // Save our new socket.
         // Refcell Safety: Short borrows in the file.
