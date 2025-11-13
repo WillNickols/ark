@@ -239,6 +239,13 @@ pub struct ExecuteCodeParams {
 	pub allow_incomplete: bool,
 }
 
+/// Parameters for the ViewVariable method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ViewVariableParams {
+	/// The name of the variable to view
+	pub variable_name: String,
+}
+
 /// Parameters for the OpenWorkspace method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct OpenWorkspaceParams {
@@ -394,6 +401,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "execute_code")]
 	ExecuteCode(ExecuteCodeParams),
 
+	/// View a variable in the data viewer
+	///
+	/// Use this to open a data viewer for a specific variable
+	#[serde(rename = "view_variable")]
+	ViewVariable(ViewVariableParams),
+
 	/// Path to the workspace folder
 	///
 	/// Returns the path to the workspace folder, or first folder if there are
@@ -455,6 +468,8 @@ pub enum UiFrontendReply {
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
 
+	/// Reply for the view_variable method - returns the data explorer comm ID
+	ViewVariableReply(Option<String>),
 }
 
 /**
@@ -540,6 +555,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::ViewVariable(_) => Ok(UiFrontendReply::ViewVariableReply(serde_json::from_value(reply)?)),
 	}
 }
 

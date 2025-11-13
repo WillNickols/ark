@@ -77,12 +77,26 @@ impl WebSocketServer {
 
         // Comm Manager listener - registers backend-initiated comms
         let backend_comms_for_manager = backend_comms.clone();
+        let iopub_tx_for_manager = iopub_tx.clone();
         std::thread::spawn(move || {
             while let Ok(event) = comm_manager_rx.recv() {
                 match event {
-                    CommManagerEvent::Opened(socket, _data) => {
+                    CommManagerEvent::Opened(socket, data) => {
                         let backend_comms_clone = backend_comms_for_manager.clone();
                         let comm_id = socket.comm_id.clone();
+                        let target_name = socket.comm_name.clone();
+                        
+                        
+                        // Send comm_open message to frontend
+                        let comm_open = crate::wire::comm_open::CommOpen {
+                            comm_id: comm_id.clone(),
+                            target_name: target_name.clone(),
+                            data,
+                        };
+                        
+                        
+                        let _ = iopub_tx_for_manager.send(crate::socket::iopub::IOPubMessage::CommOpen(None, comm_open));
+                        
                         let rt = tokio::runtime::Runtime::new().unwrap();
                         rt.block_on(async move {
                             backend_comms_clone.lock().await.insert(comm_id, socket);
